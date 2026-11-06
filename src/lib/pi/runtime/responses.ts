@@ -87,6 +87,11 @@ import {
   materializePendingSession,
 } from './registration';
 import {
+  handleReloadResponse,
+  reloadAllowsResponse,
+  refreshReloadAfterReplacement,
+} from './reload';
+import {
   clearPendingSetupWatch,
   failPendingSetup,
   handleSetupResponse,
@@ -97,6 +102,29 @@ async function handleResponse(
   controller: SessionController,
   response: Record<string, unknown>,
 ): Promise<void> {
+  const operation = controller.reload;
+  const sessionId = controller.sessionId;
+  const sessionPath = controller.sessionPath;
+  const applied = await reduceResponse(controller, response);
+  if (operation && controller.reload === operation && operation.setupFailure) {
+    controller.setupFailure = operation.setupFailure;
+  }
+  if (
+    operation &&
+    controller.reload === operation &&
+    (controller.sessionId !== sessionId ||
+      controller.sessionPath !== sessionPath)
+  ) {
+    await refreshReloadAfterReplacement(controller);
+  } else if (applied || response.success !== true) {
+    await handleReloadResponse(controller, response, true);
+  }
+}
+
+async function reduceResponse(
+  controller: SessionController,
+  response: Record<string, unknown>,
+): Promise<boolean | void> {
   const command = stringValue(response.command);
   const responseId = stringValue(response.id);
   const responseKey = responseId
@@ -126,6 +154,9 @@ async function handleResponse(
     });
   }
   const responseContext = pendingResult.context;
+  if (!reloadAllowsResponse(controller, response)) return;
+  if (controller.reload && (await handleReloadResponse(controller, response)))
+    return;
   if (handleSetupResponse(controller, response)) return;
   // Initial setup owns an inline failure surface, never the global queue.
   if (
@@ -889,7 +920,7 @@ async function handleResponse(
       id: nextRequestId('efforts'),
       type: 'get_available_thinking_levels',
     });
-    return;
+    return true;
   }
 
   if (command === 'get_messages' && data) {
@@ -1009,7 +1040,7 @@ async function handleResponse(
     // A hidden session that finishes hydrating has nothing left to wait for,
     // so this is where a runtime the user has moved on from is accounted for.
     releaseIdleRuntimes();
-    return;
+    return true;
   }
 
   if (command === 'get_entries' && data && resolvesHistory) {
@@ -1052,14 +1083,14 @@ async function handleResponse(
         };
       })
       .filter((model): model is ModelOption => Boolean(model));
-    return;
+    return true;
   }
 
   if (command === 'get_available_thinking_levels' && data) {
     controller.efforts = (Array.isArray(data.levels) ? data.levels : [])
       .map(normalizeEffort)
       .filter((level, index, levels) => levels.indexOf(level) === index);
-    return;
+    return true;
   }
 
   if (command === 'get_commands' && data) {
@@ -1067,7 +1098,7 @@ async function handleResponse(
       .map(commandOption)
       .filter((command): command is CommandOption => Boolean(command));
     controller.commandsLoaded = true;
-    return;
+    return true;
   }
 
   if (command === 'prompt') {

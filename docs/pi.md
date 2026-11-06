@@ -34,6 +34,20 @@ This matrix describes Tau's extension compatibility with Pi 0.84.1. Queue contro
 - **Extension installation or management UI (deferred):** Install extensions through Pi's normal global, project, package, or settings mechanisms.
 - **Dedicated workflow dashboard (deferred):** Workflow phases appear as ordinary Tau sessions.
 
+### Reloading Pi resources
+
+Tau exposes **`/reload`** in the slash-command menu for the current session. Type the standalone command (surrounding whitespace is allowed) or select it from the menu. It reloads Pi's extensions, skills, prompts, and context files through Pi's own `ctx.reload()` API, without restarting Pi, replacing the conversation, or requiring model authentication. Arguments and similarly named commands retain their ordinary command/prompt behavior.
+
+Tau bundles a tiny private, versioned extension and explicitly passes it to local and SSH Pi launches. The visible alias is Tau-owned; the helper never registers Pi's native `reload` command. Nothing is installed into Pi's global/project discovery directories or settings, and ordinary Pi launches remain unchanged. Tau verifies helper discovery before dispatch and fails closed if it is missing or ambiguous. The helper's source is embedded in the native binary; it needs no separate package installation.
+
+Reload is unavailable during generation, compaction, or another incompatible transition. Tau never queues or automatically replays it. The owning composer shows progress, remains editable, and blocks mutating submissions until acknowledgement and state/history/resource-control refreshes finish. Other sessions remain usable, including extension prompts raised by the reloaded runtime. Reload does not recover failed intended model setup or submit a retained draft.
+
+Pi deliberately invalidates and recreates its extension runtime. Extension closures and workflow continuations may be lost, just as with native Pi `/reload`; session files and conversation history remain Pi-owned. Terminal themes, shortcuts, and other TUI-only presentation are not emulated. Reload hooks can themselves change session identity; Tau preserves its normal replacement handling.
+
+Command rejection restores the submitted text without replacing newer draft text. Extension errors remain visible even when Pi acknowledges the command as handled. A dispatch deadline (30 seconds) or resource-refresh deadline (10 seconds) means the outcome is **unknown**, not cancelled or rolled back. Supported extension input pauses that deadline. Tau keeps mutations blocked until late completion is reconciled or **Recover Pi Runtime** explicitly stops/reopens the runtime; recovery never replays the command. Read-refresh failures also require explicit recovery rather than retrying reload.
+
+Reload compatibility is exercised separately from the read-only canary with `bun run test:pi-reload-contract` (see [reproduction](reproduction.md)). The real-Pi reload check was verified on Pi 1.4.0; the older 0.84.x baseline and a real SSH host have not been empirically verified for this feature.
+
 ### Initial model setup recovery
 
 Before sending a new session's first ordinary message or skill, Tau applies its selected model and effort. A rejected or timed-out setup preserves the editable draft and shows a session-local notice above the composer, not a dialog or persisted transcript entry. Tau reads actual state and effort capabilities without sending a prompt or hydrating history; those reads never silently accept a fallback model as the intended selection.

@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
 
+import { readFileSync, lstatSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import { createInterface } from 'node:readline';
 
 import { findPiScenario } from '../tests/support/pi-scenario/catalogue';
@@ -22,6 +24,25 @@ function validateStartup(): void {
   }
 
   const remaining = args.slice(2);
+  const extension =
+    remaining[0] === '--extension' ? remaining.splice(0, 2)[1] : undefined;
+  if (!extension || !isAbsolute(extension)) {
+    fail('expected an absolute explicit Tau helper extension.');
+  }
+  try {
+    if (
+      !lstatSync(extension).isFile() ||
+      readFileSync(extension, 'utf8') !==
+        readFileSync(
+          new URL('../src-tauri/pi-extensions/tau-reload.ts', import.meta.url),
+          'utf8',
+        )
+    ) {
+      fail('explicit Tau helper did not match the bundled source.');
+    }
+  } catch {
+    fail('explicit Tau helper could not be read.');
+  }
   const sessionDir =
     remaining[0] === '--session-dir' ? remaining.splice(0, 2)[1] : undefined;
   if (sessionDir !== process.env.TAU_PI_TEST_SESSION_DIR) {

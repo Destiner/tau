@@ -128,8 +128,15 @@ type ScriptedPiResponse =
   | {
       kind: 'response';
       request: string;
+      command: 'prompt';
+      success?: boolean;
+      error?: string;
+      data?: { disposition: 'handled' };
+    }
+  | {
+      kind: 'response';
+      request: string;
       command:
-        | 'prompt'
         | 'set_steering_mode'
         | 'set_follow_up_mode'
         | 'set_model'
@@ -277,6 +284,7 @@ type PiResponseData =
   | { commands: readonly PiCommand[] }
   | { levels: readonly string[] }
   | { messages: readonly PiMessage[] }
+  | { disposition: 'handled' }
   | { steering: readonly string[]; followUp: readonly string[] };
 
 interface ResolvedPiResponse {

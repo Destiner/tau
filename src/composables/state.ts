@@ -8,7 +8,9 @@ import { computed, reactive } from 'vue';
 
 import type { CommandOption } from '../lib/commands';
 import { errorCopy, feedbackTitle } from '../lib/error-copy';
-import invokesExtensionCommand from '../lib/pi/extension-command';
+import invokesExtensionCommand, {
+  isReloadCommand,
+} from '../lib/pi/extension-command';
 import { scopeModels } from '../lib/pi/model-scope';
 import type { ModelOption, ThinkingLevel } from '../lib/pi/model-scope';
 import {
@@ -280,6 +282,8 @@ interface SessionController {
   bootstrapSessionPath: string;
   runStateRequestId: string;
   startMessagesRequestId: string;
+  reload?: import('../lib/pi/runtime/reload').ReloadOperation;
+  reloadFence?: Record<string, number>;
   commandPromptRequestId: string;
   commandSyncRequestId: string;
   commandMessagesRequestId: string;
@@ -409,6 +413,7 @@ function sessionWorkInProgress(controller: SessionController): boolean {
   const lifecycle = classifyControllerLifecycle(controller);
   return (
     (lifecycle !== 'idle' && lifecycle !== 'ready') ||
+    Boolean(controller.reload) ||
     controller.compacting ||
     controller.compactionReconciliationPending ||
     controller.promptSubmitting ||
@@ -606,6 +611,7 @@ function controllerCanQueue(controller: SessionController): boolean {
     !controller.compactionReconciliationPending &&
     !controller.starting &&
     !controller.promptSubmitting &&
+    !controller.reload &&
     !controller.pendingPrompt &&
     !controller.submittedPrompt &&
     !controller.queueClearing &&
@@ -700,6 +706,17 @@ const canCompose = computed(() => {
     !invokesExtensionCommand(controller, controller.draft.trim())
   )
     return false;
+  if (
+    isReloadCommand(controller.draft) &&
+    (controller.syncing ||
+      controller.commandSyncRequestId ||
+      controller.commandMessagesRequestId ||
+      controller.commandRefreshFailed ||
+      controller.postSettlementHydration ||
+      controller.pendingSessionRename ||
+      controller.setupFailure?.recovering)
+  )
+    return false;
   const admittingOrdinaryPrompt = Boolean(
     controller.submittedPrompt?.optimisticId,
   );
@@ -713,6 +730,8 @@ const canCompose = computed(() => {
     controller.queuePreparing ||
     controller.queueSubmissions.length > 0 ||
     controller.promptSubmitting ||
+    Boolean(controller.pendingSettingRequestId) ||
+    Boolean(controller.reload) ||
     admittingOrdinaryPrompt ||
     controller.runtimeDisconnected ||
     controllerHasPendingDialog(controller) ||
@@ -751,6 +770,7 @@ const settingsDisabled = computed(() => {
     controller.streaming ||
     controller.stopping ||
     controller.starting ||
+    Boolean(controller.reload) ||
     Boolean(controller.pendingSettingRequestId) ||
     Boolean(controller.setupFailure?.recovering) ||
     projectActionsDisabled.value
@@ -763,6 +783,7 @@ const canRenameSession = computed(() => {
     controller &&
     !controller.phantom &&
     controller.ready &&
+    !controller.reload &&
     !controller.pendingSessionRename &&
     !projectActionsDisabled.value,
   );

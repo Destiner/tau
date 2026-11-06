@@ -45,6 +45,23 @@ a transcript outside the profile can leave the session directory too; Tau does
 not replace Pi's session runtime or intercept extension execution. Use the sample
 projects or browser mocks for disposable experimentation.
 
+## Bundled Pi helper cache
+
+Tau-started local Pi processes explicitly load the bundled reload helper from
+`<Tau profile>/pi-helpers/reload-v1-<sha256>/tau-reload.ts`. Development uses the
+disposable profile; production uses app-owned storage outside Pi's extension
+auto-discovery directories. Publication is private, atomic, and immutable by
+content revision. Matching bytes are reused, unexpected symlinks/types are
+rejected, and old revisions remain available to live processes after upgrades.
+
+SSH launches publish the same bundled bytes through their existing dedicated
+connection into `$HOME/.cache/tau/pi-helpers/reload-v1-<sha256>/tau-reload.ts`
+before executing Pi. This does not consume RPC stdin or modify Pi settings.
+Provisioning failure prevents launch rather than silently omitting the helper.
+The cache contains bundled Tau code, not credentials, settings, or conversation
+data. Helpers are not deleted on Pi shutdown/reload; there is currently no
+revision garbage collector. Ordinary Pi launches do not discover this cache.
+
 ## Opt-in native performance fixture
 
 Set `TAU_DEV_FIXTURE=performance` when launching **native development** to replace

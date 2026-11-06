@@ -16,7 +16,7 @@
       />
       <UiButton
         size="sm"
-        :disabled="!canRetrySetup || !canDraft"
+        :disabled="!canRetrySetup || !canDraft || Boolean(reloadStatus)"
         @click="retrySetup"
       >
         {{ setupFailure.recovering ? 'Retrying…' : 'Retry Setup' }}
@@ -74,7 +74,18 @@
         @update:model-value="handleEffortChange"
       />
       <span
-        v-if="compactionRestriction"
+        v-if="reloadStatus"
+        class="compaction-restriction"
+        role="status"
+      >
+        {{
+          reloadStatus === 'reloading'
+            ? 'Reloading Pi resources…'
+            : 'Reload result unknown. Recover this runtime before sending.'
+        }}
+      </span>
+      <span
+        v-else-if="compactionRestriction"
         class="compaction-restriction"
         role="status"
         :title="compactionRestriction"
@@ -172,8 +183,10 @@ import {
   commandMenuLayout,
   commandSelection,
   filterCommands,
+  projectCommands,
   slashCommandQuery,
 } from '../lib/commands';
+import invokesExtensionCommand from '../lib/pi/extension-command';
 import type { ThinkingLevel } from '../lib/pi/model-scope';
 import textFieldItems from '../lib/text-menu';
 
@@ -189,6 +202,7 @@ import UiTooltip from './ui/UiTooltip.vue';
 
 const props = defineProps<{
   headerElement: () => HTMLElement | undefined;
+  reloadStatus?: 'reloading' | 'unknown';
 }>();
 
 const emit = defineEmits<{ send: [intent: 'steer' | 'followUp'] }>();
@@ -196,6 +210,7 @@ const appCommandDispatch = inject(appCommandDispatchKey, undefined);
 const commandHint = inject(appCommandLookupKey, undefined);
 
 const {
+  activeController,
   setupFailure,
   canRetrySetup,
   retrySetup,
@@ -240,7 +255,7 @@ const commandQuery = computed(() => slashCommandQuery(draft.value));
 const filteredCommands = computed(() =>
   commandQuery.value === null
     ? []
-    : filterCommands(commands.value, commandQuery.value),
+    : filterCommands(projectCommands(commands.value), commandQuery.value),
 );
 const commandMenuActive = computed(
   () =>
@@ -283,6 +298,13 @@ watch([commandQuery, commands], ([query]) => {
 
   if (query === null) commandMenuDismissed.value = false;
 });
+
+watch(
+  () => props.reloadStatus,
+  (status) => {
+    if (status) closeSelectors();
+  },
+);
 
 watch(modelSelectorOpen, (open) => {
   if (open) effortSelectorOpen.value = false;
@@ -407,6 +429,20 @@ function selectCommand(
   intent: 'steer' | 'followUp' = 'steer',
 ): void {
   const selection = commandSelection(command, completeOnly);
+  // Choosing an action while a command is pending must not overwrite text
+  // the user has started drafting for later.
+  const controller = activeController.value;
+  if (
+    selection.submit &&
+    (props.reloadStatus ||
+      (controller &&
+        (controller.promptSubmitting ||
+          controller.compacting ||
+          (controller.working && !controller.streaming) ||
+          (controller.streaming &&
+            invokesExtensionCommand(controller, selection.draft)))))
+  )
+    return;
   draft.value = selection.draft;
   commandSelectedIndex.value = 0;
   if (selection.submit) send(intent);
@@ -420,6 +456,7 @@ function stopViaCommand(): void {
   else void stop();
 }
 function send(intent: 'steer' | 'followUp' = 'steer'): void {
+  if (props.reloadStatus) return;
   if (setupFailure.value && !extensionCommandDraft.value) return;
   emit('send', intent);
 }

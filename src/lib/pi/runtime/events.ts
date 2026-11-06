@@ -76,6 +76,7 @@ import {
   hasMeaningfulAssistantActivity,
   markPiTranscript,
 } from './registration';
+import { clearReload, reloadExtensionError } from './reload';
 import handleResponse from './responses';
 import { cancelSetup, failSetupConnection } from './setup';
 
@@ -85,6 +86,8 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
   touchController(controller);
   if (event.kind === 'started') {
     if (event.generation > controller.generation) {
+      clearReload(controller, true);
+      controller.reloadFence = undefined;
       cancelSetup(controller);
       if (controller.submittedPrompt?.generation === controller.generation) {
         const accepted = controller.submittedPrompt.accepted;
@@ -262,6 +265,8 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     controller.runStateRequestId = '';
     controller.startMessagesRequestId = '';
     controller.commandPromptRequestId = '';
+    clearReload(controller, true);
+    controller.reloadFence = undefined;
     clearCommandRefreshWatch(controller);
     controller.replacementProbeRequestId = '';
     controller.abortProbeRequestId = '';
@@ -610,6 +615,7 @@ async function handleRpc(
     return;
   }
   if (type === 'extension_error') {
+    reloadExtensionError(controller);
     setControllerError(controller, errorCopy.extensionFailure);
   }
 }

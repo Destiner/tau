@@ -377,15 +377,10 @@ fn parse_directory_listing(
 }
 
 pub fn remote_pi_command(working_directory: &str, session_path: Option<&str>) -> String {
-    let mut command = format!(
-        "cd {} && exec pi --mode rpc",
-        shell_words::quote(working_directory)
-    );
-    if let Some(path) = session_path {
-        command.push_str(" --session ");
-        command.push_str(&shell_words::quote(path));
-    }
-    remote_login_shell_command(&command)
+    remote_login_shell_command(&crate::pi_helper::remote_bootstrap(
+        working_directory,
+        session_path,
+    ))
 }
 
 pub fn remote_login_shell_command(command: &str) -> String {
@@ -533,10 +528,8 @@ mod tests {
             "/home/timur/Project files",
             Some("/home/timur/.pi/session's.jsonl"),
         );
-        assert!(command.contains("Project files"));
-        assert!(command.contains("session"));
-        assert!(command.contains("pi --mode rpc"));
         assert!(command.contains("/bin/sh -c"));
+        assert!(!command.contains('\n'));
 
         {
             let command = remote_directory_command(Some("/home/timur/Project files"));

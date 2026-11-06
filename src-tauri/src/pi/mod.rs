@@ -212,7 +212,11 @@ fn start_pi_with<R: Runtime>(
     }
     let mut command = Command::new(&pi_path);
     configure_child_path(&mut command, &executable_paths)?;
-    command.args(["--mode", "rpc"]).current_dir(&project_path);
+    let helper_path = crate::pi_helper::provision(crate::profile::current()?.data_dir())?;
+    command
+        .args(["--mode", "rpc", "--extension"])
+        .arg(helper_path)
+        .current_dir(&project_path);
     #[cfg(dev)]
     let session_dir = Some(crate::storage::default_session_dir(&project_path)?);
     #[cfg(not(dev))]

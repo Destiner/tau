@@ -6,6 +6,7 @@ mod feedback;
 mod file_preview;
 mod models;
 mod pi;
+mod pi_helper;
 mod profile;
 mod quit;
 mod saved_transcript;

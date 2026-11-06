@@ -8,6 +8,7 @@ import {
 } from '../../../composables/state';
 import { errorCopy } from '../../error-copy';
 import type { TraceContext } from '../../telemetry/trace-context';
+import { isReloadCommand } from '../extension-command';
 
 import {
   rpc,
@@ -22,6 +23,7 @@ import {
   cancelPendingPrompt,
   releaseSubmittedPrompt,
 } from './prompts';
+import { startReload } from './reload';
 import { watchPendingSetup } from './setup';
 
 async function applyPendingSessionSettings(
@@ -110,6 +112,10 @@ async function dispatchPendingPrompt(
   const prompt = controller.pendingPrompt;
   if (!prompt) return;
   controller.pendingPrompt = undefined;
+  if (isReloadCommand(prompt.message)) {
+    await startReload(controller, prompt.draft);
+    return;
+  }
   controller.postSettlementHydration = false;
   controller.settledAssistantActivity = false;
   controller.materializationBarrierRequestId = '';

@@ -1,4 +1,6 @@
-type CommandSource = 'extension' | 'prompt' | 'skill';
+import { TAU_RELOAD_COMMAND } from './pi/extension-command';
+
+type CommandSource = 'builtin' | 'extension' | 'prompt' | 'skill';
 
 interface CommandOption {
   name: string;
@@ -11,6 +13,20 @@ interface CommandOption {
     origin: 'package' | 'top-level';
     baseDir?: string;
   };
+}
+
+function projectCommands(commands: readonly CommandOption[]): CommandOption[] {
+  return [
+    {
+      name: 'reload',
+      description: 'Reload Pi extensions, skills, prompts, and context files.',
+      source: 'builtin',
+    },
+    ...commands.filter(
+      (command) =>
+        command.name !== TAU_RELOAD_COMMAND && command.name !== 'reload',
+    ),
+  ];
 }
 
 const MENU_GAP = 5;
@@ -154,6 +170,7 @@ export type {
 };
 
 export {
+  projectCommands,
   commandMenuLayout,
   slashCommandQuery,
   filterCommands,
