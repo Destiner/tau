@@ -147,6 +147,24 @@ const ARCHIVED_SESSION = {
   name: 'Older archived work',
 };
 const REQUIRED_NATIVE_COUNTS = {
+  'reload-resources': {
+    load_workspace: 1,
+    read_model_scope: 2,
+    register_session: 4,
+    set_active_session: 8,
+  },
+  'reload-rejected': {
+    load_workspace: 1,
+    read_model_scope: 1,
+    register_session: 1,
+    set_active_session: 1,
+  },
+  'reload-busy': {
+    load_workspace: 1,
+    read_model_scope: 1,
+    register_session: 2,
+    set_active_session: 2,
+  },
   'empty-workspace': {
     load_workspace: 1,
     'plugin:dialog|open': 1,
@@ -524,6 +542,7 @@ function scenarioWorkspace(scenarioName: string): WorkspaceSnapshot {
     scenarioName === 'saved-session-extension-prompt-cycling' ||
     scenarioName === 'saved-session-notice-boundaries' ||
     scenarioName === 'cross-project-sidebar-metadata-actions' ||
+    scenarioName === 'reload-resources' ||
     scenarioName === 'saved-session-command-replacement' ||
     scenarioName === 'plan-implement-replacement' ||
     scenarioName === 'delayed-successor-verification' ||
@@ -1317,6 +1336,13 @@ function expectedRegisteredSession(
   scenarioName: string,
   invocation: number,
 ): NativeSessionIdentity {
+  if (scenarioName === 'reload-resources') {
+    const expected = [MAIN_SESSION, MAIN_SESSION, BACKUP_SESSION, MAIN_SESSION][
+      invocation - 1
+    ];
+    if (!expected) throw new Error('register_session ran too many times.');
+    return expected;
+  }
   if (scenarioName === 'project-opening') {
     const expected =
       invocation === 1
@@ -1437,6 +1463,7 @@ function scenarioRuntimeKey(
   if (
     scenarioName === 'saved-session-extension-prompt-cycling' ||
     scenarioName === 'saved-session-notice-boundaries' ||
+    scenarioName === 'reload-resources' ||
     scenarioName === 'saved-session-command-replacement' ||
     scenarioName === 'plan-implement-replacement' ||
     scenarioName === 'delayed-successor-verification' ||

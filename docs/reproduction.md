@@ -13,7 +13,7 @@ bun run repro -- saved-session-stale-generation
 
 The runner validates the name, opens Vite's `?test-scenario=<name>`, and stops with Ctrl-C. Plain `bun run dev` uses a generic in-memory sandbox, not a scenario; it resets on reload. Playwright navigates directly to the scenario URL.
 
-Use `--list` for the authoritative names and descriptions; `tests/support/pi-scenario/catalogue.ts` registers them. Inspect gates through the console API below. Read the selected tape and matching `tests/e2e/pi-scenario-*.e2e.ts` for exact prompts and gate order rather than maintaining a second walkthrough here. Coverage includes first run, archives, session replacement/registration, queues, prompt admission, interruption, compaction/history, extension prompts, retries, and local/remote process failure.
+Use `--list` for the authoritative names and descriptions; `tests/support/pi-scenario/catalogue.ts` registers them. Inspect gates through the console API below. Read the selected tape and matching `tests/e2e/pi-scenario-*.e2e.ts` for exact prompts and gate order rather than maintaining a second walkthrough here. Coverage includes first run, archives, session replacement/registration, queues, prompt admission, interruption, compaction/history, extension prompts, retries, reload, and local/remote process failure. The `reload-resources`, `reload-rejected`, and `reload-busy` scenarios cover discovery, repeat reload, catalogue refresh, draft preservation, session switching, and busy rejection.
 
 Control the selected scenario from the browser console:
 
@@ -54,3 +54,27 @@ bun run test:pi-contract
 Requires Pi on `PATH` or `TAU_PI_PATH`; reports the version and fails if missing/incompatible. It is excluded from default Bun, Playwright, and Cargo suites. It uses isolated temporary working/config/session directories in offline mode, disables tools and extension/resource loading, and passes no provider credentials.
 
 Only read-only RPCs are sent: `get_available_models`, `get_commands`, `get_state`, `get_available_thinking_levels`, and `get_messages`. No prompts, command execution, model/provider calls, SSH, or external services. Assertions cover JSONL/process usability, dynamic response IDs, and consumed fields—not catalogue contents, provider names, paths, optional fields, or ordering. See `scripts/pi-contract.ts` for the exact isolation and checks.
+
+### Opt-in reload compatibility canary
+
+```sh
+bun run test:pi-reload-contract
+```
+
+This separate, command-executing check explicitly loads Tau's bundled helper in
+an isolated offline Pi process, with temporary HOME/config/session directories,
+no inherited provider credentials, no tools, and unrelated resource discovery
+disabled. It never modifies the installed Pi package or user settings. Controlled
+fixture changes verify extension implementations, skill/prompt catalogue additions
+and removals, an explicitly appended context file, repeat helper availability,
+and unchanged identity/history. Context coverage uses `--append-system-prompt`,
+not AGENTS.md discovery. Process shutdown and forced cleanup are bounded.
+See `scripts/pi-reload-contract.ts` for the precise assertions. This is opt-in and
+is not part of the read-only canary or default test suites.
+
+For native manual verification, use disposable projects and resources: add/remove
+an extension command, skill, prompt, and AGENTS.md, invoke `/reload` through the
+menu and by typing, and confirm changes without a process/session restart. Check
+conversation/reader position, another session, failed hooks, and reload-time
+extension input. A real SSH host requires separate approved end-to-end validation;
+local execution of generated SSH bootstrap scripts is not equivalent.

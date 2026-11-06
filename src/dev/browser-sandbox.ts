@@ -8,6 +8,7 @@ import type {
   WorkspaceSnapshot,
 } from '../composables/state';
 import type { PiBridgeEvent } from '../lib/pi/bridge';
+import { TAU_RELOAD_COMMAND } from '../lib/pi/extension-command';
 import {
   setSidebarWidthStorage,
   type SidebarWidthStorage,
@@ -384,7 +385,9 @@ function createBrowserSandboxHandler(
         await response(runtime, request, { models: MODELS });
         return;
       case 'get_commands':
-        await response(runtime, request, { commands: [] });
+        await response(runtime, request, {
+          commands: [{ name: TAU_RELOAD_COMMAND, source: 'extension' }],
+        });
         return;
       case 'get_state':
         await response(runtime, request, stateFor(runtime));
@@ -441,6 +444,21 @@ function createBrowserSandboxHandler(
         });
         return;
       case 'prompt':
+        if (request.message === `/${TAU_RELOAD_COMMAND}`) {
+          if (runtime.streaming) {
+            await bridge(runtime, {
+              type: 'response',
+              id: request.id,
+              command: 'prompt',
+              success: false,
+              error: 'Wait for Pi to finish before reloading.',
+            });
+          } else {
+            // Resource reload preserves the runtime, identity, history and queues.
+            await response(runtime, request, { disposition: 'handled' });
+          }
+          return;
+        }
         if (runtime.streaming && request.streamingBehavior !== undefined) {
           await queuePrompt(runtime, request);
         } else {
