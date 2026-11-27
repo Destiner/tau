@@ -15,6 +15,6 @@ interface ActionTooltipOptions {
 // avoid Vue treating an absent Boolean-union prop as false.
 type ActionTooltip = ActionTooltipOptions | false;
 
-const activeActionTooltipAnchor = shallowRef<HTMLElement>();
+const activeTooltipId = shallowRef<string>();
 
-export { activeActionTooltipAnchor, type ActionTooltip };
+export { activeTooltipId, type ActionTooltip };

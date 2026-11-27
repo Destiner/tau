@@ -397,9 +397,14 @@ flowchart LR
   await page.setViewportSize({ width: 520, height: 700 });
   const tsCode = document.locator('.code-block[data-tau-lang="ts"]');
   const copy = tsCode.getByRole('button', { name: 'Copy Code' });
+  const close = dialog.getByRole('button', { name: 'Close Preview' });
+  await close.focus();
+  await expect(tooltip).toHaveText('Close Preview');
   await copy.hover();
+  await expect(tooltip.filter({ hasText: 'Copy Code' })).toBeVisible();
   await expect(tooltip).toHaveCount(1);
-  await expect(tooltip).toHaveText('Copy Code');
+  await expect(close).toBeFocused();
+  await expect(copy).toHaveAccessibleDescription('Copy Code');
   await copy.click();
   await expect(tsCode.locator('.code-copy')).toHaveAttribute(
     'data-copied',

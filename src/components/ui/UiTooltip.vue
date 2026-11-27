@@ -5,7 +5,8 @@
   >
     <TooltipRoot
       :disabled="disabled"
-      @update:open="handleSlotOpen"
+      :open="Boolean($slots.default && active)"
+      @update:open="setOpen"
     >
       <TooltipTrigger
         v-if="$slots.default"
@@ -62,8 +63,10 @@ import {
 import {
   type ComponentPublicInstance,
   computed,
+  onBeforeUnmount,
   shallowRef,
   Teleport,
+  useId,
   watch,
 } from 'vue';
 
@@ -73,7 +76,7 @@ import {
   type ShortcutPlatform,
 } from '../../lib/app-commands/shortcut';
 
-import { activeActionTooltipAnchor } from './action-tooltip';
+import { activeTooltipId } from './action-tooltip';
 
 const props = withDefaults(
   defineProps<{
@@ -103,50 +106,52 @@ const props = withDefaults(
 const emit = defineEmits<{ 'update:open': [open: boolean] }>();
 
 const gap = 6;
+const id = `tau-tooltip-${useId()}`;
 const content = shallowRef<HTMLElement>();
-const visible = computed(() =>
-  Boolean(
-    props.anchor &&
-    !props.disabled &&
-    (props.open ?? activeActionTooltipAnchor.value === props.anchor),
-  ),
-);
+const active = computed(() => activeTooltipId.value === id);
+const visible = computed(() => Boolean(props.anchor && active.value));
 const rekaPlacement = computed(() => ({
   side: props.side,
   align: props.align,
   sideOffset: gap,
   collisionPadding: gap,
 }));
-const externalPlacement = { role: 'tooltip' };
+const externalPlacement = { id, role: 'tooltip' };
 
 function setContent(element: Element | ComponentPublicInstance | null): void {
   content.value = element instanceof HTMLElement ? element : undefined;
 }
 
-function handleSlotOpen(open: boolean): void {
-  if (open) activeActionTooltipAnchor.value = undefined;
+function setOpen(open: boolean): void {
+  if (open) activeTooltipId.value = id;
+  else if (active.value) activeTooltipId.value = undefined;
 }
 
+onBeforeUnmount(() => setOpen(false));
+
 watch(
-  () => [props.anchor, props.disabled, props.open !== undefined] as const,
-  ([anchor, disabled, controlled], _, onCleanup) => {
-    if (!anchor || disabled || controlled) return;
+  () => [props.anchor, props.disabled, props.open] as const,
+  ([anchor, disabled, requestedOpen], _, onCleanup) => {
+    if (!anchor || disabled) return;
+    if (requestedOpen !== undefined) {
+      setOpen(requestedOpen);
+      onCleanup(() => setOpen(false));
+      return;
+    }
+
     let timer: ReturnType<typeof setTimeout> | undefined;
     const close = (): void => {
       clearTimeout(timer);
-      if (activeActionTooltipAnchor.value === anchor)
-        activeActionTooltipAnchor.value = undefined;
+      setOpen(false);
     };
     const hover = (event: PointerEvent): void => {
       if (event.pointerType === 'touch' || event.buttons) return;
-      timer = setTimeout(() => {
-        activeActionTooltipAnchor.value = anchor;
-      }, props.delay);
+      timer = setTimeout(() => setOpen(true), props.delay);
     };
     const focus = (): void => {
       if (!anchor.matches(':focus-visible')) return;
       clearTimeout(timer);
-      activeActionTooltipAnchor.value = anchor;
+      setOpen(true);
     };
     const listeners = new AbortController();
     const options = { signal: listeners.signal };
@@ -168,7 +173,8 @@ watch(
   () => [props.anchor, content.value, props.side, props.align] as const,
   ([anchor, element, side, align], _, onCleanup) => {
     if (!anchor || !element) return;
-    let active = true;
+    updateDescription(anchor, true);
+    let positioning = true;
     // External hints share placement with Reka's hints but are not dismissible
     // layers: a hint must not take Escape away from its dialog or popover.
     const stop = autoUpdate(anchor, element, () => {
@@ -181,15 +187,14 @@ watch(
           shift({ padding: gap }),
         ],
       }).then(({ x, y }) => {
-        if (!active) return;
+        if (!positioning) return;
         element.style.transform = `translate(${x}px, ${y}px)`;
         element.style.visibility = 'visible';
       });
     });
     const dismiss = (): void => {
+      setOpen(false);
       if (props.open !== undefined) emit('update:open', false);
-      if (activeActionTooltipAnchor.value === anchor)
-        activeActionTooltipAnchor.value = undefined;
     };
     const onKeydown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') dismiss();
@@ -201,7 +206,8 @@ watch(
     window.addEventListener('keydown', onKeydown, true);
     window.addEventListener('scroll', onScroll, true);
     onCleanup(() => {
-      active = false;
+      positioning = false;
+      updateDescription(anchor, false);
       stop();
       window.removeEventListener('keydown', onKeydown, true);
       window.removeEventListener('scroll', onScroll, true);
@@ -209,6 +215,16 @@ watch(
   },
   { flush: 'post' },
 );
+
+function updateDescription(anchor: HTMLElement, open: boolean): void {
+  const attribute = 'aria-describedby';
+  const descriptions = new Set(anchor.getAttribute(attribute)?.match(/\S+/g));
+  if (open) descriptions.add(id);
+  else descriptions.delete(id);
+  if (descriptions.size)
+    anchor.setAttribute(attribute, [...descriptions].join(' '));
+  else anchor.removeAttribute(attribute);
+}
 
 const platform: ShortcutPlatform = /Mac|iPhone|iPad/.test(navigator.platform)
   ? 'mac'

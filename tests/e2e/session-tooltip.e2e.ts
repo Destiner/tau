@@ -200,6 +200,34 @@ test('reads and updates a session tooltip while keeping hostile long content saf
   });
 });
 
+test('hands off between a focused preview and a hovered action without moving focus', async ({
+  page,
+}) => {
+  await page.goto(fixtureUrl);
+  const row = page.locator('.session-select').first();
+  const chevron = page.getByRole('button', {
+    name: 'Collapse Tooltip fixture',
+  });
+  const visibleHints = page.locator('.ui-tooltip:visible');
+  const preview = visibleHints.filter({ hasText: 'Markdown preview' });
+  const action = visibleHints.filter({ hasText: 'Collapse Tooltip fixture' });
+
+  await row.focus();
+  await expect(preview).toBeVisible();
+  await chevron.hover();
+  await expect(action).toBeVisible();
+  await expect(visibleHints).toHaveCount(1);
+  await expect(row).toBeFocused();
+
+  await page.getByTestId('outside-sidebar').hover();
+  await chevron.focus();
+  await expect(action).toBeVisible();
+  await row.hover();
+  await expect(preview).toBeVisible();
+  await expect(visibleHints).toHaveCount(1);
+  await expect(chevron).toBeFocused();
+});
+
 test.describe('timestamp-backed session ages', () => {
   test.use({ pausedClock: true });
 });
