@@ -30,6 +30,7 @@ import savedSessionExtensionPrompt, {
   savedSessionExtensionPromptProjectSwitching,
 } from './saved-session-extension-prompt';
 import savedSessionExtensionPromptCycling from './saved-session-extension-prompt-navigation';
+import savedSessionExtensionSelectWhileTyping from './saved-session-extension-select-while-typing';
 import {
   savedSessionExtensionEditor,
   savedSessionExtensionEditorNavigation,
@@ -254,6 +255,7 @@ const scenarios = [
   savedSessionExtensionPrompt,
   savedSessionExtensionPromptProjectSwitching,
   savedSessionExtensionPromptCycling,
+  savedSessionExtensionSelectWhileTyping,
   savedSessionExtensionInput,
   savedSessionExtensionEditor,
   savedSessionExtensionInputNavigation,
