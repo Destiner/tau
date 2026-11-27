@@ -138,6 +138,7 @@ for (const method of ['select', 'confirm'] as const) {
 
 test('select highlight follows Tab, arrows, and hover, and Enter uses the highlight', async ({
   page,
+  browserName,
 }) => {
   await page.goto(`${fixtureUrl}&method=select&prompt=compact`);
   const prompt = page.getByRole('dialog');
@@ -147,7 +148,12 @@ test('select highlight follows Tab, arrows, and hover, and Enter uses the highli
   const outcome = page.getByTestId('dialog-outcome');
   await expect(first).toBeFocused();
 
-  await page.keyboard.press('Tab');
+  // macOS WebKit's Option+Tab includes buttons in sequential focus navigation.
+  await page.keyboard.press(
+    browserName === 'webkit' && process.platform === 'darwin'
+      ? 'Alt+Tab'
+      : 'Tab',
+  );
   await expect(second).toBeFocused();
   await expect(selected).toHaveText('label-1');
   await page.keyboard.press('ArrowUp');
