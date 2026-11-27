@@ -182,6 +182,7 @@ for (const mode of ['local', 'remote'] as const) {
 
 test('remembers only completed imports, replays the explicit port, and keeps history after project removal', async ({
   page,
+  browserName,
 }) => {
   await page.goto(remoteOpeningUrl);
   const source = page.getByRole('textbox', { name: 'Message Pi' });
@@ -279,7 +280,12 @@ test('remembers only completed imports, replays the explicit port, and keeps his
   await expect(destination).toBeVisible();
   await page.keyboard.press('ArrowDown');
   await expect(destination).toBeFocused();
-  await page.keyboard.press('Tab');
+  // macOS WebKit's Option+Tab includes buttons in sequential focus navigation.
+  await page.keyboard.press(
+    browserName === 'webkit' && process.platform === 'darwin'
+      ? 'Alt+Tab'
+      : 'Tab',
+  );
   const forget = connection.list.getByRole('button', {
     name: `Forget ${targetRemoteLabel}`,
     exact: true,
