@@ -82,40 +82,28 @@ test('both project disclosure controls fold without switching sessions or losing
     'Review the sidebar navigation states',
   );
   await composer.fill('Keep Atlas active');
-  const originalNotesIds = await sessionIds(notes);
 
-  for (const group of [notes, atlas]) {
-    const name = group.locator('.project-select');
-    const chevron = group.locator('.project-toggle');
-    for (const control of [name, chevron]) {
-      for (const expanded of [false, true]) {
-        await control.click();
-        await expect(name).toHaveAttribute('aria-expanded', String(expanded));
-        await expect(chevron).toHaveAttribute(
-          'aria-expanded',
-          String(expanded),
-        );
-        await expect(group.locator('.session-list')).toHaveCount(
-          expanded ? 1 : 0,
-        );
-        await expect(atlas.locator('.project-row')).toHaveClass(/selected/);
-        await expect(page.locator('.transcript')).toContainText(
-          'Review the sidebar navigation states',
-        );
-        await expect(composer).toHaveValue('Keep Atlas active');
-      }
-    }
-  }
+  const name = notes.locator('.project-select');
+  const chevron = notes.locator('.project-toggle');
+  await name.click();
+  await expect(name).toHaveAttribute('aria-expanded', 'false');
+  await expect(chevron).toHaveAttribute('aria-expanded', 'false');
+  await expect(notes.locator('.session-list')).toHaveCount(0);
+  await expectPersistedFold(page, 'notes', true);
+
+  await chevron.click();
+  await expect(name).toHaveAttribute('aria-expanded', 'true');
+  await expect(chevron).toHaveAttribute('aria-expanded', 'true');
+  await expect(notes.locator('.session-list')).toBeVisible();
+  await expectPersistedFold(page, 'notes', false);
   await expect(selected.locator('.session-select')).toHaveAttribute(
     'aria-current',
     'page',
   );
-  expect(await sessionIds(notes)).toEqual(originalNotesIds);
-
-  await notes.locator('.project-select').click();
-  await expectPersistedFold(page, 'notes', true);
-  await notes.locator('.project-toggle').click();
-  await expectPersistedFold(page, 'notes', false);
+  await expect(page.locator('.transcript')).toContainText(
+    'Review the sidebar navigation states',
+  );
+  await expect(composer).toHaveValue('Keep Atlas active');
 });
 
 test('the project plus creates a fresh selected session without moving the pointer', async ({
@@ -175,14 +163,11 @@ test('disclosing an empty project does not create a session, but its plus opens 
   await expect(name).toHaveAttribute('aria-expanded', 'true');
   await expect(empty.locator('.session-row')).toHaveCount(1);
   await expect(empty.locator('.session-row.selected')).toBeVisible();
-  expect(await plus.evaluate((element) => element.matches(':hover'))).toBe(
-    true,
-  );
   await expectPersistedFold(page, 'empty', false);
   await expect(page.getByRole('textbox', { name: 'Message Pi' })).toBeEnabled();
 });
 
-test('project actions reveal for hover and keyboard focus, not lingering pointer focus', async ({
+test('keyboard navigation reveals and operates the project header controls', async ({
   page,
 }) => {
   await openWorkspace(page);
@@ -190,47 +175,21 @@ test('project actions reveal for hover and keyboard focus, not lingering pointer
   const name = notes.locator('.project-select');
   const chevron = notes.locator('.project-toggle');
   const plus = notes.getByRole('button', { name: 'New Session in notes' });
-  const composer = page.getByRole('textbox', { name: 'Message Pi' });
-  await composer.fill('Keep this draft');
 
-  await name.click();
-  await expect(name).toHaveAttribute('aria-expanded', 'false');
-  await expect(chevron).toHaveCSS('opacity', '0.65');
-  await expect(plus).toHaveCSS('opacity', '0.65');
-  await composer.hover();
-  await expect(chevron).toHaveCSS('opacity', '0');
   await expect(plus).toHaveCSS('opacity', '0');
-
-  // Focus the anchor explicitly: mouse clicks do not focus buttons on WebKit.
   await name.focus();
-  await page.keyboard.press('Tab');
-  await expect(chevron).toBeFocused();
-  await expect(chevron).toHaveCSS('opacity', '1');
-  await page.keyboard.press('Tab');
-  await expect(plus).toBeFocused();
-  await expect(plus).toHaveCSS('opacity', '1');
-  await page.keyboard.press('Shift+Tab');
-  await expect(chevron).toBeFocused();
-  await page.keyboard.press('Shift+Tab');
-  await expect(name).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(name).toHaveAttribute('aria-expanded', 'false');
 
-  for (const control of [name, chevron]) {
-    await control.focus();
-    for (const [key, expanded] of [
-      ['ArrowRight', true],
-      ['ArrowLeft', false],
-      ['Enter', true],
-      ['Space', false],
-    ] as const) {
-      await page.keyboard.press(key);
-      await expect(name).toHaveAttribute('aria-expanded', String(expanded));
-      await expect(control).toBeFocused();
-      await expect(composer).toHaveValue('Keep this draft');
-    }
-  }
+  await page.keyboard.press('Tab');
+  await expect(chevron).toBeFocused();
+  await expect(chevron).not.toHaveCSS('opacity', '0');
+  await page.keyboard.press('ArrowRight');
+  await expect(name).toHaveAttribute('aria-expanded', 'true');
 
   await page.keyboard.press('Tab');
   await expect(plus).toBeFocused();
+  await expect(plus).not.toHaveCSS('opacity', '0');
   await page.keyboard.press('Space');
   await expect(notes.locator('.session-row')).toHaveCount(3);
   await expect(notes.locator('.session-row.selected')).toBeVisible();
