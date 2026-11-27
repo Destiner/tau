@@ -75,6 +75,153 @@ test('keeps a reader at the end when a prompt appears', async ({ page }) => {
   expect(await transcript.evaluate(distanceFromEnd)).toBeLessThanOrEqual(2);
 });
 
+for (const method of ['select', 'confirm'] as const) {
+  test(`typing does not answer a ${method} prompt, but fresh Enter accepts the default`, async ({
+    page,
+  }) => {
+    await page.goto(`${fixtureUrl}&method=${method}&prompt=compact`);
+    const prompt = page.getByRole('dialog');
+    const primary =
+      method === 'select'
+        ? prompt.getByRole('option', { name: 'label-0' })
+        : prompt.getByRole('button', { name: 'Confirm' });
+    const outcome = page.getByTestId('dialog-outcome');
+    await expect(primary).toBeFocused();
+
+    await page.keyboard.type('Still typing 42, right?');
+    await expect(outcome).toBeEmpty();
+    await expect(primary).toBeFocused();
+    if (method === 'select') {
+      await expect(prompt.getByRole('option', { selected: true })).toHaveText(
+        'label-0',
+      );
+    }
+
+    await page.keyboard.press('Enter');
+    await expect(outcome).toHaveText(
+      JSON.stringify({ submit: method === 'select' ? 'label-0' : true }),
+    );
+  });
+
+  test(`held and composing Enter do not answer a ${method} prompt`, async ({
+    page,
+  }) => {
+    await page.keyboard.down('Enter');
+    await page.goto(`${fixtureUrl}&method=${method}&prompt=compact`);
+    const prompt = page.getByRole('dialog');
+    const primary =
+      method === 'select'
+        ? prompt.getByRole('option', { name: 'label-0' })
+        : prompt.getByRole('button', { name: 'Confirm' });
+    await expect(primary).toBeFocused();
+    await page.keyboard.down('Enter');
+    await page.keyboard.up('Enter');
+
+    const composingPrevented = await primary.evaluate((element) =>
+      [false, true].map((ctrlKey) => {
+        const event = new KeyboardEvent('keydown', {
+          key: 'Enter',
+          ctrlKey,
+          bubbles: true,
+          cancelable: true,
+          isComposing: true,
+        });
+        element.dispatchEvent(event);
+        return event.defaultPrevented;
+      }),
+    );
+    expect(composingPrevented).toEqual([true, true]);
+    await expect(prompt).toBeVisible();
+    await expect(page.getByTestId('dialog-outcome')).toBeEmpty();
+  });
+}
+
+test('select highlight follows Tab, arrows, and hover, and Enter uses the highlight', async ({
+  page,
+}) => {
+  await page.goto(`${fixtureUrl}&method=select&prompt=compact`);
+  const prompt = page.getByRole('dialog');
+  const first = prompt.getByRole('option', { name: 'label-0' });
+  const second = prompt.getByRole('option', { name: 'label-1' });
+  const selected = prompt.getByRole('option', { selected: true });
+  const outcome = page.getByTestId('dialog-outcome');
+  await expect(first).toBeFocused();
+
+  await page.keyboard.press('Tab');
+  await expect(second).toBeFocused();
+  await expect(selected).toHaveText('label-1');
+  await page.keyboard.press('ArrowUp');
+  await expect(first).toBeFocused();
+  await expect(selected).toHaveText('label-0');
+
+  await second.hover();
+  await expect(first).toBeFocused();
+  await expect(selected).toHaveText('label-1');
+  await expect(first).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  expect(
+    await first.evaluate(
+      (element) => getComputedStyle(element, '::before').content,
+    ),
+  ).toBe('none');
+  await page.keyboard.press('ArrowUp');
+  await expect(selected).toHaveText('label-0');
+  await first.hover();
+  await second.hover();
+  await expect(selected).toHaveText('label-1');
+  await expect(outcome).toBeEmpty();
+  await page.keyboard.press('Enter');
+  await expect(outcome).toHaveText('{"submit":"label-1"}');
+});
+
+test('confirm arrows move between answers and Enter uses the focused answer', async ({
+  page,
+}) => {
+  await page.goto(`${fixtureUrl}&method=confirm&prompt=compact`);
+  const prompt = page.getByRole('dialog');
+  const confirm = prompt.getByRole('button', { name: 'Confirm' });
+  const no = prompt.getByRole('button', { name: 'No' });
+  const outcome = page.getByTestId('dialog-outcome');
+  await expect(confirm).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(no).toBeFocused();
+  await page.keyboard.press('ArrowUp');
+  await expect(confirm).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(no).toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(outcome).toBeEmpty();
+  await page.keyboard.press('Enter');
+  await expect(outcome).toHaveText('{"submit":false}');
+});
+
+test('Space does not activate a choice prompt Cancel button', async ({
+  page,
+}) => {
+  await page.goto(`${fixtureUrl}&method=select&prompt=compact`);
+  const cancel = page.getByRole('button', { name: 'Cancel' });
+  await cancel.press('Space');
+  await expect(cancel).toBeFocused();
+  await expect(page.getByTestId('dialog-outcome')).toBeEmpty();
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('dialog-outcome')).toHaveText(
+    '{"cancel":true,"count":1}',
+  );
+});
+
+for (const method of ['select', 'confirm'] as const) {
+  test(`a pointer can still answer a ${method} prompt`, async ({ page }) => {
+    await page.goto(`${fixtureUrl}&method=${method}&prompt=compact`);
+    const answer =
+      method === 'select'
+        ? page.getByRole('option', { name: 'label-1' })
+        : page.getByRole('button', { name: 'No' });
+    await answer.click();
+    await expect(page.getByTestId('dialog-outcome')).toHaveText(
+      JSON.stringify({ submit: method === 'select' ? 'label-1' : false }),
+    );
+  });
+}
+
 for (const method of ['select', 'confirm', 'input', 'editor'] as const) {
   test(`Escape cancels a focused ${method} prompt without bubbling`, async ({
     page,

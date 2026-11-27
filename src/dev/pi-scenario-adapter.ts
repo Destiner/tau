@@ -286,6 +286,12 @@ const REQUIRED_NATIVE_COUNTS = {
     register_session: 7,
     set_active_session: 3,
   },
+  'saved-session-extension-select-while-typing': {
+    load_workspace: 1,
+    read_model_scope: 1,
+    register_session: 1,
+    set_active_session: 1,
+  },
   'saved-session-extension-prompt-cycling': {
     load_workspace: 1,
     read_model_scope: 2,

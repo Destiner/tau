@@ -130,11 +130,17 @@ palette unless their launcher appears above.
 | Session rename                | Enter or `⌘Enter` commits; Escape cancels. Opening the palette does not blur-commit.                                                                 |
 | Menus and context menus       | Arrows, Enter, and their existing typeahead; Escape dismisses that menu.                                                                             |
 | Remote project dialog         | Enter/`⌘Enter` submits where applicable; `⌘↑` goes to parent; Escape closes only when dismissible.                                                   |
-| Pi prompts                    | Existing arrows/Enter selection; `⌘Enter` primary submit; `⌘⇧Enter` negative confirmation; Escape cancels only that prompt when eligible.            |
+| Pi prompts                    | Up/Down moves the highlight; Enter answers. `⌘Enter` submits text or confirms; `⌘⇧Enter` answers No. Escape cancels when eligible.                   |
 | Model and effort lists        | Existing list navigation and Enter selection; Escape closes the current list.                                                                        |
 | Queue and unsent review       | Escape dismisses the focused status/review; `⌘Enter` restores a focused draft when eligible.                                                         |
 | Feedback, quit, and update UI | `⌘Enter` activates the eligible primary action; `⌘⇧Enter` skips an update; Escape closes only a dismissible surface.                                 |
 | Issue reporter                | `⌘⇧S` toggles Include Current Session within the report; `⌘Enter` submits; Escape retains unsent text.                                               |
+
+In Pi choice and yes/no prompts, a fresh Enter accepts the highlighted answer,
+including the initial default. Space, letters, digits, repeated Enter, and Enter
+during IME composition do not answer. If a question arrives while you type, the
+composer keeps the draft it had before arrival. Typing while the choice prompt
+has focus is ignored, not added to the draft.
 
 An inline Pi prompt blocks global palette and shortcut actions. Explicit sidebar
 row actions to mark a session read/unread or archive an eligible session remain
