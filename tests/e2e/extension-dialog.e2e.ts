@@ -155,7 +155,7 @@ test('select highlight follows Tab, arrows, and hover, and Enter uses the highli
   await expect(selected).toHaveText('label-0');
 
   await second.hover();
-  await expect(first).toBeFocused();
+  await expect(second).toBeFocused();
   await expect(selected).toHaveText('label-1');
   await expect(first).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
   expect(
@@ -167,10 +167,41 @@ test('select highlight follows Tab, arrows, and hover, and Enter uses the highli
   await expect(selected).toHaveText('label-0');
   await first.hover();
   await second.hover();
+  await expect(second).toBeFocused();
   await expect(selected).toHaveText('label-1');
   await expect(outcome).toBeEmpty();
   await page.keyboard.press('Enter');
   await expect(outcome).toHaveText('{"submit":"label-1"}');
+});
+
+test('hover only follows list focus, and clicking the focused option submits the highlight', async ({
+  page,
+}) => {
+  await page.goto(
+    `${fixtureUrl}&method=select&prompt=compact&focusControls=true`,
+  );
+  const prompt = page.getByRole('dialog');
+  const first = prompt.getByRole('option', { name: 'label-0' });
+  const second = prompt.getByRole('option', { name: 'label-1' });
+  const unrelated = page.getByRole('textbox', { name: 'Unrelated input' });
+  const selected = prompt.getByRole('option', { selected: true });
+  await expect(first).toBeFocused();
+
+  await unrelated.focus();
+  await second.hover();
+  await expect(unrelated).toBeFocused();
+  await expect(selected).toHaveText('label-1');
+
+  await first.focus();
+  await first.hover();
+  await second.hover();
+  await expect(selected).toHaveText('label-1');
+  await page.locator('button[role="option"]:focus').evaluate((button) => {
+    (button as HTMLButtonElement).click();
+  });
+  await expect(page.getByTestId('dialog-outcome')).toHaveText(
+    '{"submit":"label-1"}',
+  );
 });
 
 test('confirm arrows move between answers and Enter uses the focused answer', async ({
@@ -209,6 +240,38 @@ test('Space does not activate a choice prompt Cancel button', async ({
 });
 
 for (const method of ['select', 'confirm'] as const) {
+  test(`Space activates Copy Code without answering a ${method} prompt`, async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      const writes: string[] = [];
+      window.__TAU_CLIPBOARD_WRITES__ = writes;
+      window.__TAURI_INTERNALS__ = {
+        transformCallback: (callback): unknown => callback,
+        invoke: (command, payload): Promise<void> => {
+          if (command === 'plugin:clipboard-manager|write_text') {
+            writes.push(payload?.text?.trim() ?? '');
+          }
+          return Promise.resolve();
+        },
+      };
+    });
+    await page.goto(`${fixtureUrl}&method=${method}`);
+    const prompt = page.getByRole('dialog');
+    const primary =
+      method === 'select'
+        ? prompt.getByRole('option', { name: 'label-0' })
+        : prompt.getByRole('button', { name: 'Confirm' });
+    await expect(primary).toBeFocused();
+
+    await prompt.getByRole('button', { name: 'Copy Code' }).press('Space');
+    await expect
+      .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
+      .toEqual(["const label = 'release';"]);
+    await expect(prompt).toBeVisible();
+    await expect(page.getByTestId('dialog-outcome')).toBeEmpty();
+  });
+
   test(`a pointer can still answer a ${method} prompt`, async ({ page }) => {
     await page.goto(`${fixtureUrl}&method=${method}&prompt=compact`);
     const answer =

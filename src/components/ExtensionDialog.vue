@@ -44,7 +44,7 @@
         :aria-selected="index === selectedIndex"
         :disabled="submitting || disabled"
         @focus="() => (selectedIndex = index)"
-        @mouseenter="() => (selectedIndex = index)"
+        @mouseenter="(event) => hoverOption(event, index)"
         @click="() => chooseOption(option)"
       >
         {{ option }}
@@ -123,6 +123,7 @@
         Submit
       </UiButton>
       <UiButton
+        ref="cancelAction"
         variant="secondary"
         type="button"
         :disabled="submitting || disabled"
@@ -177,6 +178,7 @@ const prompt = ref<HTMLFormElement>();
 const optionList = ref<HTMLDivElement>();
 const primaryAction = ref<InstanceType<typeof UiButton>>();
 const negativeAction = ref<InstanceType<typeof UiButton>>();
+const cancelAction = ref<InstanceType<typeof UiButton>>();
 const selectedIndex = ref(0);
 let escapeClaimed = false;
 
@@ -235,6 +237,16 @@ function focusDialog(): void {
   }
 }
 
+function hoverOption(event: MouseEvent, index: number): void {
+  selectedIndex.value = index;
+  if (
+    optionList.value?.contains(document.activeElement) &&
+    event.currentTarget instanceof HTMLButtonElement
+  ) {
+    event.currentTarget.focus({ preventScroll: true });
+  }
+}
+
 function chooseOption(value: string): void {
   if (!props.submitting && !props.disabled) emit('submit', value);
 }
@@ -252,10 +264,14 @@ function cancel(): void {
 }
 
 function preventChoiceSpace(event: KeyboardEvent): void {
+  const target = event.target;
+  if (event.key !== ' ' || !(target instanceof HTMLButtonElement)) return;
+  if (props.method !== 'select' && props.method !== 'confirm') return;
   if (
-    (props.method === 'select' || props.method === 'confirm') &&
-    event.key === ' ' &&
-    event.target instanceof HTMLButtonElement
+    optionList.value?.contains(target) ||
+    target === primaryAction.value?.button ||
+    target === negativeAction.value?.button ||
+    target === cancelAction.value?.button
   ) {
     event.preventDefault();
   }
