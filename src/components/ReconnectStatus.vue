@@ -6,11 +6,7 @@
     <UiStatusDot tone="working" />
     <span>{{ message }}</span>
     <UiButton
-      size="sm"
-      variant="ghost"
-      :disabled="disabled || busy"
-      @click="requestReconnect"
-      >{{
+      :label="
         busy
           ? remote
             ? 'Reconnecting…'
@@ -18,8 +14,12 @@
           : remote
             ? 'Reconnect'
             : 'Retry'
-      }}</UiButton
-    >
+      "
+      size="sm"
+      variant="ghost"
+      :disabled="disabled || busy"
+      @click="requestReconnect"
+    />
   </div>
 </template>
 

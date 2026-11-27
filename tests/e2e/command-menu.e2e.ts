@@ -8,8 +8,29 @@ test('slash-command keyboard navigation reveals its selection after manual scrol
   await page.setViewportSize({ width: 900, height: 700 });
   await page.goto(scenarioUrl);
   const composer = page.getByRole('textbox', { name: 'Message Pi' });
-  await composer.fill('/');
+  await expect(composer).toBeEnabled();
   const menu = page.locator('.command-menu');
+  await composer.evaluate((field: HTMLTextAreaElement) => {
+    field.focus();
+    field.dispatchEvent(
+      new CompositionEvent('compositionstart', { bubbles: true }),
+    );
+    field.value = '/';
+    field.dispatchEvent(
+      new InputEvent('input', { bubbles: true, data: '/', isComposing: true }),
+    );
+    field.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+        cancelable: true,
+        isComposing: true,
+      }),
+    );
+  });
+  await expect(composer).toHaveValue('/');
+  await expect(menu).toHaveCount(0);
+  await composer.dispatchEvent('compositionend', { bubbles: true, data: '/' });
   await expect(menu).toBeVisible();
   await menu.evaluate((element) => {
     element.scrollTop = element.scrollHeight;

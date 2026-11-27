@@ -57,9 +57,8 @@
                 side="bottom"
                 :delay="700"
               >
-                <button
+                <UiPreviewButton
                   class="project-select"
-                  type="button"
                   tabindex="0"
                   :disabled="projectActionsDisabled"
                   @click="() => handleProjectSelect(project)"
@@ -71,7 +70,7 @@
                     :label="indicatorLabel(projectIndicator(project))"
                   />
                   <span>{{ project.name }}</span>
-                </button>
+                </UiPreviewButton>
               </UiTooltip>
               <UiIconButton
                 class="project-toggle"
@@ -133,9 +132,8 @@
                       }}</span
                     >
                   </template>
-                  <button
+                  <UiPreviewButton
                     class="session-select"
-                    type="button"
                     :aria-current="
                       isSessionSelected(project, session) ? 'page' : undefined
                     "
@@ -161,34 +159,20 @@
                         }}
                       </span>
                     </span>
-                  </button>
+                  </UiPreviewButton>
                 </UiTooltip>
-                <UiTooltip
+                <UiIconButton
                   v-if="canArchiveSession(project, session)"
-                  :text="
-                    commandHint?.('session.archive', {
-                      projectPath: project.path,
-                      sessionId: session.id,
-                    })?.title ?? 'Archive Session'
-                  "
-                  :shortcut="
-                    commandHint?.('session.archive', {
-                      projectPath: project.path,
-                      sessionId: session.id,
-                    })?.shortcut
-                  "
+                  class="session-archive"
+                  size="md"
+                  variant="reveal"
+                  :label="`Archive ${session.title}`"
+                  :tooltip="archiveTooltip(project, session)"
+                  :disabled="projectActionsDisabled"
+                  @click="() => handleArchiveSession(project, session)"
                 >
-                  <UiIconButton
-                    class="session-archive"
-                    size="md"
-                    variant="reveal"
-                    :label="`Archive ${session.title}`"
-                    :disabled="projectActionsDisabled"
-                    @click="() => handleArchiveSession(project, session)"
-                  >
-                    <UiIcon name="archive" />
-                  </UiIconButton>
-                </UiTooltip>
+                  <UiIcon name="archive" />
+                </UiIconButton>
               </div>
             </UiContextMenu>
             <div
@@ -212,49 +196,40 @@
 
     <footer class="sidebar-footer">
       <div class="project-menu-wrap">
-        <!--
-          The tooltip wraps the menu, not the menu's trigger: a trigger
-          registers with the nearest popper root, and from inside the tooltip
-          that would be the tooltip's own.
-        -->
-        <UiTooltip
-          text="Open Project"
-          shortcut="Mod+O"
-        >
-          <span class="project-menu-trigger">
-            <UiMenu
-              v-model:open="projectMenuOpen"
-              :items="projectMenuItems"
-              :min-width="176"
-            >
-              <template #trigger>
-                <UiIconButton
-                  ref="openProjectButton"
-                  size="lg"
-                  label="Open Project"
-                  :disabled="projectActionsDisabled"
-                >
-                  <UiIcon name="folder-plus" />
-                </UiIconButton>
-              </template>
-            </UiMenu>
-          </span>
-        </UiTooltip>
-        <UiTooltip
-          :text="showingArchived ? 'Show Sessions' : 'Show Archived Sessions'"
-          shortcut="Mod+Shift+H"
-        >
-          <UiIconButton
-            size="lg"
-            :class="{ active: showingArchived }"
-            :label="
-              showingArchived ? 'Show Sessions' : 'Show Archived Sessions'
-            "
-            @click="toggleArchivedView"
+        <span class="project-menu-trigger">
+          <UiMenu
+            v-model:open="projectMenuOpen"
+            :items="projectMenuItems"
+            :min-width="176"
           >
-            <UiIcon name="archive" />
-          </UiIconButton>
-        </UiTooltip>
+            <template #trigger>
+              <UiIconButton
+                ref="openProjectButton"
+                size="lg"
+                :label="openProjectLabel"
+                :tooltip="false"
+                :disabled="projectActionsDisabled"
+              >
+                <UiIcon name="folder-plus" />
+              </UiIconButton>
+            </template>
+          </UiMenu>
+        </span>
+        <UiTooltip
+          :anchor="openProjectButton?.button"
+          :text="openProjectLabel"
+          shortcut="Mod+O"
+          :disabled="projectActionsDisabled || projectMenuOpen"
+        />
+        <UiIconButton
+          size="lg"
+          :class="{ active: showingArchived }"
+          :label="showingArchived ? 'Show Sessions' : 'Show Archived Sessions'"
+          :tooltip="{ shortcut: 'Mod+Shift+H' }"
+          @click="toggleArchivedView"
+        >
+          <UiIcon name="archive" />
+        </UiIconButton>
         <IssueReportPopover
           v-if="adminMode"
           ref="issueReporter"
@@ -265,13 +240,14 @@
     </footer>
 
     <div
+      ref="resizeHandle"
       class="sidebar-resize-handle"
       :class="{
         'pointer-focused': resizeHandlePointerFocused,
         'highlight-suppressed': resizeHighlightSuppressed,
       }"
       role="separator"
-      aria-label="Resize Sidebar"
+      :aria-label="resizeSidebarLabel"
       aria-orientation="vertical"
       :aria-valuemin="MIN_SIDEBAR_WIDTH"
       :aria-valuemax="MAX_SIDEBAR_WIDTH"
@@ -286,6 +262,12 @@
       @lostpointercapture="stopSidebarResize"
       @keydown="handleSidebarResizeKeydown"
     ></div>
+    <UiTooltip
+      :anchor="resizeHandle"
+      :text="resizeSidebarLabel"
+      side="right"
+      :disabled="resizing"
+    />
   </aside>
 </template>
 
@@ -323,8 +305,10 @@ import UiIcon from './ui/UiIcon.vue';
 import UiIconButton from './ui/UiIconButton.vue';
 import UiMenu from './ui/UiMenu.vue';
 import type { UiMenuItem } from './ui/UiMenu.vue';
+import UiPreviewButton from './ui/UiPreviewButton.vue';
 import UiStatusDot from './ui/UiStatusDot.vue';
 import UiTooltip from './ui/UiTooltip.vue';
+import type { ActionTooltip } from './ui/action-tooltip';
 
 const props = defineProps<{
   sidebarWidth: number;
@@ -368,10 +352,13 @@ const commandHint = inject(appCommandLookupKey, undefined);
 
 const projectList = ref<HTMLElement>();
 const sidebar = ref<HTMLElement>();
+const openProjectLabel = 'Open Project';
 const openProjectButton = ref<InstanceType<typeof UiIconButton>>();
 const projectMenuOpen = ref(false);
 const updateStatus = ref<InstanceType<typeof UpdateStatus>>();
 const issueReporter = ref<InstanceType<typeof IssueReportPopover>>();
+const resizeSidebarLabel = 'Resize Sidebar';
+const resizeHandle = ref<HTMLElement>();
 const resizeHandlePointerFocused = ref(false);
 const resizeHighlightSuppressed = ref(false);
 
@@ -577,6 +564,17 @@ function handleRemoveProject(project: ProjectSummary): void {
     return;
   }
   requestProjectRemoval(project);
+}
+
+function archiveTooltip(
+  project: ProjectSummary,
+  session: SessionSummary,
+): ActionTooltip {
+  const hint = commandHint?.(
+    'session.archive',
+    sessionTarget(project, session),
+  );
+  return { text: hint?.title ?? 'Archive Session', shortcut: hint?.shortcut };
 }
 
 function handleArchiveSession(

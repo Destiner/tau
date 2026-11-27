@@ -6,6 +6,22 @@ import globals from 'globals';
 import { configs as tsConfigs, parser as tsParser } from 'typescript-eslint';
 import parserVue from 'vue-eslint-parser';
 
+const nativeControlRules = [
+  [
+    'button',
+    'Use UiButton, UiIconButton, UiListOption, or UiPreviewButton.',
+    ['UiButton', 'UiIconButton', 'UiListOption', 'UiPreviewButton', 'UiSelect'],
+  ],
+  ['input', 'Use UiInput or UiCheckbox.', ['UiInput']],
+  ['select', 'Use UiSelect.', []],
+  ['textarea', 'Use UiTextarea.', ['UiTextarea']],
+];
+
+const restrictedControls = nativeControlRules.map(([element, message]) => ({
+  element,
+  message,
+}));
+
 export default [
   {
     ignores: ['.worktrees/**', 'dist/**', 'src-tauri/**', 'test-results/**'],
@@ -127,6 +143,23 @@ export default [
       },
     },
   },
+  {
+    files: ['src/**/*.vue'],
+    rules: {
+      'vue/no-restricted-html-elements': ['error', ...restrictedControls],
+    },
+  },
+  ...nativeControlRules.flatMap(([element, , primitives]) =>
+    primitives.map((primitive) => ({
+      files: [`src/components/ui/${primitive}.vue`],
+      rules: {
+        'vue/no-restricted-html-elements': [
+          'error',
+          ...restrictedControls.filter((rule) => rule.element !== element),
+        ],
+      },
+    })),
+  ),
   // Last: drops the layout rules Prettier already owns, which otherwise
   // disagree with it over wrapped Vue templates.
   configPrettier,

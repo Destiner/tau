@@ -1,37 +1,31 @@
 <template>
-  <!--
-    The provider lives here rather than at the app root so that a tooltip works
-    wherever it is mounted — the app, a dev fixture, a test — without a second
-    thing to remember. Nesting providers is allowed; the cost is that the
-    "slide to the neighbouring button and see it at once" skip window is per
-    tooltip rather than shared, which is invisible at this delay.
-
-    One rule for callers: a trigger that opens its own floating surface (a menu,
-    a popover) must not be wrapped directly. `TooltipRoot` is a popper root, and
-    the nearest popper root is the one a trigger registers itself with, so a
-    menu trigger placed in this slot hands the tooltip its anchor and leaves its
-    own menu to be positioned from nothing. Put its own root in between — wrap a
-    plain element around the whole `UiMenu`/`PopoverRoot` and label that instead.
-    Doing so costs the keyboard reveal, since focus does not bubble to the
-    wrapper; the pointer, which is who a tooltip is for, is unaffected.
-  -->
-  <TooltipProvider :delay-duration="delay">
-    <TooltipRoot>
-      <TooltipTrigger as-child>
+  <TooltipProvider
+    v-if="$slots.default || visible"
+    :delay-duration="delay"
+  >
+    <TooltipRoot
+      :disabled="disabled"
+      @update:open="handleSlotOpen"
+    >
+      <TooltipTrigger
+        v-if="$slots.default"
+        as-child
+      >
         <slot />
       </TooltipTrigger>
-      <TooltipPortal>
-        <!-- Styled in ui/surface.css: reka portals this to the body, where a
-             scoped attribute never reaches it. -->
-        <!-- Kept off the window edge by the same gap it keeps from its
-             trigger, for a long one that has to shift to stay on screen. -->
-        <TooltipContent
+      <component
+        :is="$slots.default ? TooltipPortal : Teleport"
+        to="body"
+      >
+        <component
+          :is="$slots.default ? TooltipContent : 'div'"
+          :ref="setContent"
           class="ui-tooltip"
-          :class="contentClass"
-          :side="side"
-          :align="align"
-          :side-offset="6"
-          :collision-padding="6"
+          :class="[
+            $slots.default ? undefined : 'ui-tooltip-anchored',
+            contentClass,
+          ]"
+          v-bind="$slots.default ? rekaPlacement : externalPlacement"
         >
           <template v-if="shortcut">
             <span class="ui-tooltip-label">
@@ -44,13 +38,20 @@
             name="content"
             >{{ text }}</slot
           >
-        </TooltipContent>
-      </TooltipPortal>
+        </component>
+      </component>
     </TooltipRoot>
   </TooltipProvider>
 </template>
 
 <script setup lang="ts">
+import {
+  autoUpdate,
+  computePosition,
+  flip,
+  offset,
+  shift,
+} from '@floating-ui/dom';
 import {
   TooltipContent,
   TooltipPortal,
@@ -58,7 +59,13 @@ import {
   TooltipRoot,
   TooltipTrigger,
 } from 'reka-ui';
-import { computed } from 'vue';
+import {
+  type ComponentPublicInstance,
+  computed,
+  shallowRef,
+  Teleport,
+  watch,
+} from 'vue';
 
 import {
   formatShortcut,
@@ -66,15 +73,10 @@ import {
   type ShortcutPlatform,
 } from '../../lib/app-commands/shortcut';
 
+import { activeActionTooltipAnchor } from './action-tooltip';
+
 const props = withDefaults(
   defineProps<{
-    /**
-     * The name of the thing the trigger does — an icon button's label, said
-     * out loud — or the value a row shows too little of, such as a project's
-     * path. A reviewed status reason may be a sentence; never show raw error
-     * payloads here. Pass a registered shortcut separately so it can use the
-     * platform's notation.
-     */
     text: string;
     /** A real keyboard binding for this action, never an invented hint. */
     shortcut?: ShortcutInput;
@@ -82,6 +84,10 @@ const props = withDefaults(
     align?: 'start' | 'center' | 'end';
     delay?: number;
     contentClass?: string;
+    anchor?: HTMLElement;
+    disabled?: boolean;
+    /** Set only when the owning surface delegates events to a shared anchor. */
+    open?: boolean;
   }>(),
   {
     shortcut: undefined,
@@ -89,7 +95,119 @@ const props = withDefaults(
     align: 'center',
     delay: 450,
     contentClass: undefined,
+    anchor: undefined,
+    open: undefined,
   },
+);
+
+const emit = defineEmits<{ 'update:open': [open: boolean] }>();
+
+const gap = 6;
+const content = shallowRef<HTMLElement>();
+const visible = computed(() =>
+  Boolean(
+    props.anchor &&
+    !props.disabled &&
+    (props.open ?? activeActionTooltipAnchor.value === props.anchor),
+  ),
+);
+const rekaPlacement = computed(() => ({
+  side: props.side,
+  align: props.align,
+  sideOffset: gap,
+  collisionPadding: gap,
+}));
+const externalPlacement = { role: 'tooltip' };
+
+function setContent(element: Element | ComponentPublicInstance | null): void {
+  content.value = element instanceof HTMLElement ? element : undefined;
+}
+
+function handleSlotOpen(open: boolean): void {
+  if (open) activeActionTooltipAnchor.value = undefined;
+}
+
+watch(
+  () => [props.anchor, props.disabled, props.open !== undefined] as const,
+  ([anchor, disabled, controlled], _, onCleanup) => {
+    if (!anchor || disabled || controlled) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const close = (): void => {
+      clearTimeout(timer);
+      if (activeActionTooltipAnchor.value === anchor)
+        activeActionTooltipAnchor.value = undefined;
+    };
+    const hover = (event: PointerEvent): void => {
+      if (event.pointerType === 'touch' || event.buttons) return;
+      timer = setTimeout(() => {
+        activeActionTooltipAnchor.value = anchor;
+      }, props.delay);
+    };
+    const focus = (): void => {
+      if (!anchor.matches(':focus-visible')) return;
+      clearTimeout(timer);
+      activeActionTooltipAnchor.value = anchor;
+    };
+    const listeners = new AbortController();
+    const options = { signal: listeners.signal };
+    anchor.addEventListener('pointerenter', hover, options);
+    anchor.addEventListener('pointerleave', close, options);
+    anchor.addEventListener('pointerdown', close, options);
+    anchor.addEventListener('click', close, options);
+    anchor.addEventListener('focus', focus, options);
+    anchor.addEventListener('blur', close, options);
+    onCleanup(() => {
+      close();
+      listeners.abort();
+    });
+  },
+  { flush: 'post', immediate: true },
+);
+
+watch(
+  () => [props.anchor, content.value, props.side, props.align] as const,
+  ([anchor, element, side, align], _, onCleanup) => {
+    if (!anchor || !element) return;
+    let active = true;
+    // External hints share placement with Reka's hints but are not dismissible
+    // layers: a hint must not take Escape away from its dialog or popover.
+    const stop = autoUpdate(anchor, element, () => {
+      void computePosition(anchor, element, {
+        strategy: 'fixed',
+        placement: align === 'center' ? side : `${side}-${align}`,
+        middleware: [
+          offset(gap),
+          flip({ padding: gap }),
+          shift({ padding: gap }),
+        ],
+      }).then(({ x, y }) => {
+        if (!active) return;
+        element.style.transform = `translate(${x}px, ${y}px)`;
+        element.style.visibility = 'visible';
+      });
+    });
+    const dismiss = (): void => {
+      if (props.open !== undefined) emit('update:open', false);
+      if (activeActionTooltipAnchor.value === anchor)
+        activeActionTooltipAnchor.value = undefined;
+    };
+    const onKeydown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') dismiss();
+    };
+    const onScroll = (event: Event): void => {
+      if (event.target instanceof Node && event.target.contains(anchor))
+        dismiss();
+    };
+    window.addEventListener('keydown', onKeydown, true);
+    window.addEventListener('scroll', onScroll, true);
+    onCleanup(() => {
+      active = false;
+      stop();
+      window.removeEventListener('keydown', onKeydown, true);
+      window.removeEventListener('scroll', onScroll, true);
+    });
+  },
+  { flush: 'post' },
 );
 
 const platform: ShortcutPlatform = /Mac|iPhone|iPad/.test(navigator.platform)

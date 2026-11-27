@@ -6,9 +6,11 @@
   >
     <div class="search-controls">
       <div class="search-field">
-        <input
+        <UiInput
           ref="input"
-          :value="query"
+          class="search-input"
+          variant="unstyled"
+          :model-value="query"
           aria-label="Find in Transcript"
           placeholder="Search"
           spellcheck="false"
@@ -50,6 +52,7 @@ import { computed, ref } from 'vue';
 
 import UiIcon from './ui/UiIcon.vue';
 import UiIconButton from './ui/UiIconButton.vue';
+import UiInput from './ui/UiInput.vue';
 
 const props = defineProps<{
   query: string;
@@ -63,7 +66,7 @@ const emit = defineEmits<{
   navigate: [direction: number];
   close: [];
 }>();
-const input = ref<HTMLInputElement>();
+const input = ref<InstanceType<typeof UiInput>>();
 const status = computed(() =>
   props.busy || props.pending || !props.query.trim()
     ? ''
@@ -97,8 +100,9 @@ function handleKeydown(event: KeyboardEvent): void {
   }
 }
 function focus(select = false): void {
-  input.value?.focus({ preventScroll: true });
-  if (select) input.value?.select();
+  const field = input.value?.input;
+  field?.focus({ preventScroll: true });
+  if (select) field?.select();
 }
 defineExpose({ focus });
 </script>
@@ -130,7 +134,7 @@ defineExpose({ focus });
   min-width: 0;
 }
 
-.search-controls input {
+.search-input {
   flex: 1;
   width: 0;
   min-width: 35px;
@@ -142,7 +146,7 @@ defineExpose({ focus });
   font-size: var(--text-md);
 }
 
-.search-controls input:focus {
+.search-input:focus {
   outline: none;
 }
 

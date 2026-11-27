@@ -54,6 +54,12 @@ from a rule here. If it isn't, the rubric is missing a rule, not an entry.
   and reconciles in the background. `[unit]`
 - Disabled controls look disabled and are inert — no dead clicks that
   swallow input. `[audit]`
+- App templates use the shared UI wrappers for native buttons and fields.
+  Enabled standalone actions, selectors, checkboxes, disclosures, resize/drag
+  handles, and generated Markdown actions show one app tooltip. A rich row
+  preview replaces the default hint. Disabled controls, editable fields,
+  menu/list options, content links, and browser/OS controls do not need a hint.
+  `[e2e]`
 
 ## 2. Input integrity
 

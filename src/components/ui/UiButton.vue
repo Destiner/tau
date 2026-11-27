@@ -2,26 +2,43 @@
   <button
     ref="button"
     type="button"
-    class="ui-button"
-    :class="[variant, size]"
+    :class="variant === 'plain' ? undefined : ['ui-button', variant, size]"
+    :disabled="disabled || undefined"
+    v-bind="$attrs"
   >
     <slot />
+    <slot name="caption">{{ label }}</slot>
+    <UiTooltip
+      v-if="tooltip !== false && !disabled"
+      v-bind="tooltip"
+      :anchor="button"
+      :text="tooltip?.text ?? label"
+    />
   </button>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue';
 
+import UiTooltip from './UiTooltip.vue';
+import type { ActionTooltip } from './action-tooltip';
+
 withDefaults(
   defineProps<{
-    variant?: 'primary' | 'secondary' | 'ghost';
+    label: string;
+    disabled?: boolean;
+    tooltip?: ActionTooltip;
+    variant?: 'primary' | 'secondary' | 'ghost' | 'plain';
     size?: 'sm' | 'md';
   }>(),
   {
+    tooltip: undefined,
     variant: 'secondary',
     size: 'sm',
   },
 );
+
+defineOptions({ inheritAttrs: false });
 
 const button = ref<HTMLButtonElement>();
 

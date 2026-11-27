@@ -161,6 +161,20 @@ test('chevron clicks and Left/Right on either header control only fold, while En
     await expect(composer).toHaveValue('Keep Atlas active');
   }
 
+  const tooltip = page.locator('.ui-tooltip:visible');
+  const toggleBox = await toggle.boundingBox();
+  for (const name of ['Collapse notes', 'Expand notes']) {
+    await toggle.hover();
+    await expect(tooltip).toHaveCount(1);
+    await expect(tooltip).toContainText(name);
+    expect(await toggle.boundingBox()).toEqual(toggleBox);
+    await toggle.click();
+    await composer.hover();
+    await expect(tooltip).toHaveCount(0);
+    await expectAtlasActive();
+  }
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
   for (const expanded of [false, true]) {
     await toggle.click();
     await expect(toggle).toHaveAttribute('aria-expanded', String(expanded));
@@ -183,6 +197,8 @@ test('chevron clicks and Left/Right on either header control only fold, while En
   await label.focus();
   await page.keyboard.press('Tab');
   await expect(toggle).toBeFocused();
+  await expect(tooltip).toHaveCount(1);
+  await expect(tooltip).toHaveText('Collapse notes');
   for (const [key, expanded] of [
     ['Enter', false],
     ['Space', true],

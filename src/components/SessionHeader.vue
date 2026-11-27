@@ -19,20 +19,18 @@
         @keydown.escape.prevent="cancelSessionRename"
       />
       <h1 v-else>
-        <UiTooltip
+        <UiButton
           v-if="canRenameSession"
-          text="Rename Session"
-          shortcut="Mod+Shift+R"
-          side="bottom"
-        >
-          <button
-            class="session-name"
-            type="button"
-            @click="beginSessionRename"
-          >
-            {{ sessionTitle }}
-          </button>
-        </UiTooltip>
+          class="session-name"
+          variant="plain"
+          :label="sessionTitle"
+          :tooltip="{
+            text: 'Rename Session',
+            shortcut: 'Mod+Shift+R',
+            side: 'bottom',
+          }"
+          @click="beginSessionRename"
+        />
         <span
           v-else
           class="session-name"
@@ -40,51 +38,41 @@
         >
       </h1>
     </div>
-    <UiTooltip
+    <UiIconButton
       v-if="activeProject"
-      text="New Session"
-      shortcut="Mod+N"
-      side="bottom"
+      class="session-header-action"
+      size="lg"
+      label="New Session"
+      :tooltip="{ shortcut: 'Mod+N', side: 'bottom' }"
+      :disabled="projectActionsDisabled"
+      @click="handleNewSession"
     >
-      <UiIconButton
-        class="session-header-action"
-        size="lg"
-        label="New Session"
-        :disabled="projectActionsDisabled"
-        @click="handleNewSession"
-      >
-        <UiIcon name="plus" />
-      </UiIconButton>
-    </UiTooltip>
-    <UiTooltip
-      text="Command Palette"
-      shortcut="Mod+K"
-      side="bottom"
+      <UiIcon name="plus" />
+    </UiIconButton>
+    <UiIconButton
+      class="session-header-action session-palette-button"
+      size="lg"
+      label="Open Command Palette"
+      :tooltip="{ text: 'Command Palette', shortcut: 'Mod+K', side: 'bottom' }"
+      @pointerdown.prevent
+      @click="handlePaletteToggle"
     >
-      <UiIconButton
-        class="session-header-action session-palette-button"
-        size="lg"
-        label="Open Command Palette"
-        @pointerdown.prevent
-        @click="handlePaletteToggle"
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+        stroke-linecap="round"
       >
-        <svg
-          aria-hidden="true"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.8"
-          stroke-linecap="round"
-        >
-          <circle
-            cx="10.8"
-            cy="10.8"
-            r="6.5"
-          />
-          <path d="m16 16 5 5" />
-        </svg>
-      </UiIconButton>
-    </UiTooltip>
+        <circle
+          cx="10.8"
+          cy="10.8"
+          r="6.5"
+        />
+        <path d="m16 16 5 5" />
+      </svg>
+    </UiIconButton>
   </header>
 </template>
 
@@ -93,10 +81,10 @@ import { nextTick, ref, watch } from 'vue';
 
 import useTau from '../composables/useTau';
 
+import UiButton from './ui/UiButton.vue';
 import UiIcon from './ui/UiIcon.vue';
 import UiIconButton from './ui/UiIconButton.vue';
 import UiInput from './ui/UiInput.vue';
-import UiTooltip from './ui/UiTooltip.vue';
 
 const props = withDefaults(
   defineProps<{

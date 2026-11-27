@@ -8,13 +8,11 @@
     role="listbox"
     aria-label="Commands"
   >
-    <button
+    <UiListOption
       v-for="(command, index) in commands"
       :id="`command-option-${index}`"
       :key="`${command.source}:${command.name}`"
       class="command-option ui-pick-row"
-      type="button"
-      role="option"
       tabindex="-1"
       :data-cursor="index === selectedIndex || undefined"
       :aria-selected="index === selectedIndex"
@@ -32,7 +30,7 @@
         </span>
       </span>
       <span class="command-source">{{ command.source }}</span>
-    </button>
+    </UiListOption>
   </div>
 </template>
 
@@ -40,6 +38,8 @@
 import { computed, ref } from 'vue';
 
 import type { CommandOption, CommandMenuPlacement } from '../lib/commands';
+
+import UiListOption from './ui/UiListOption.vue';
 
 const props = defineProps<{
   commands: CommandOption[];

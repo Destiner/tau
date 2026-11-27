@@ -17,12 +17,12 @@
           pageTitle
         }}</DialogTitle>
         <header class="command-palette-header">
-          <button
+          <UiIconButton
             v-if="nested"
             class="command-palette-back"
-            type="button"
-            aria-label="Back"
-            title="Back (⌘[)"
+            variant="plain"
+            label="Back"
+            :tooltip="{ shortcut: 'Mod+[' }"
             @click="back"
           >
             <svg
@@ -36,7 +36,7 @@
             >
               <path d="m14 6-6 6 6 6" />
             </svg>
-          </button>
+          </UiIconButton>
           <svg
             v-else
             class="command-palette-search-icon"
@@ -54,14 +54,15 @@
             />
             <path d="m16 16 5 5" />
           </svg>
-          <input
+          <UiInput
             ref="search"
             v-model="query"
+            variant="unstyled"
             :placeholder="placeholder"
             :aria-label="pageTitle"
             role="combobox"
             aria-autocomplete="list"
-            :aria-expanded="true"
+            aria-expanded="true"
             :aria-controls="resultsId"
             :aria-activedescendant="activeDescendant"
             @keydown="onKeydown"
@@ -85,12 +86,10 @@
             >
               {{ group.label }}
             </div>
-            <button
+            <UiListOption
               v-for="row in group.rows"
               :id="optionId(row.id)"
               :key="row.id"
-              type="button"
-              role="option"
               class="command-palette-row"
               :class="{ selected: row.id === selectedId }"
               :aria-selected="row.id === selectedId"
@@ -115,7 +114,7 @@
                   >{{ key }}</span
                 ></kbd
               >
-            </button>
+            </UiListOption>
           </div>
           <p
             v-if="filteredRows.length === 0"
@@ -138,6 +137,10 @@ import {
   DialogTitle,
 } from 'reka-ui';
 import { computed, getCurrentInstance, nextTick, ref, watch } from 'vue';
+
+import UiIconButton from './ui/UiIconButton.vue';
+import UiInput from './ui/UiInput.vue';
+import UiListOption from './ui/UiListOption.vue';
 
 const open = defineModel<boolean>('open', { default: false });
 const query = defineModel<string>('query', { default: '' });
@@ -163,7 +166,7 @@ const emit = defineEmits<{
   close: [];
 }>();
 
-const search = ref<HTMLInputElement>();
+const search = ref<InstanceType<typeof UiInput>>();
 let internalSelection: string | null | undefined;
 const instanceId = getCurrentInstance()?.uid ?? 'palette';
 const resultsId = `command-palette-results-${instanceId}`;
@@ -295,7 +298,7 @@ watch(
     if (!isOpen) return;
     ensureSelection();
     await nextTick();
-    search.value?.focus();
+    search.value?.input?.focus();
     requestAnimationFrame(() => void reveal(selectedId.value));
   },
   { immediate: true },
@@ -326,7 +329,7 @@ function handleOpenChange(next: boolean): void {
 
 function handleOpenAutoFocus(event: Event): void {
   event.preventDefault();
-  search.value?.focus();
+  search.value?.input?.focus();
 }
 
 function handleCloseAutoFocus(event: Event): void {

@@ -70,9 +70,11 @@ test('finds archived work from the sidebar menu, reviews and restores it', async
     const archivedList = page.locator('.archived-list');
     await expect(archivedList).toBeVisible();
     await expect(page.locator('.project-group')).toHaveCount(0);
-    await expect(
-      archivedList.getByText('Today', { exact: true }),
-    ).toBeVisible();
+    const today = archivedList.getByRole('button', { name: 'Today' });
+    await today.hover();
+    const tooltip = page.locator('.ui-tooltip:visible');
+    await expect(tooltip).toHaveCount(1);
+    await expect(tooltip).toHaveText(/Collapse Today/);
     await expect(archivedList.locator('.row')).toHaveCount(61);
     const row = archivedList.locator('.row', {
       hasText: 'Older archived work',

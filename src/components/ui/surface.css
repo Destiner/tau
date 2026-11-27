@@ -249,6 +249,15 @@
   line-height: var(--leading-tight);
 }
 
+.ui-tooltip-anchored {
+  visibility: hidden;
+  position: fixed;
+  z-index: 1100;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
 .ui-tooltip:has(.ui-tooltip-shortcut) {
   display: flex;
   align-items: center;

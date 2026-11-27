@@ -1,5 +1,35 @@
 import { expect, test } from './fixtures';
 
+test('shows the resize hint without intercepting pointer capture or arrow keys', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const composer = page.getByRole('textbox', { name: 'Message Pi' });
+  await expect(composer).toBeEnabled();
+  const handle = page.getByRole('separator', { name: 'Resize Sidebar' });
+  const tooltip = page.locator('.ui-tooltip:visible');
+  await handle.hover();
+  await expect(tooltip).toHaveCount(1);
+  await expect(tooltip).toHaveText('Resize Sidebar');
+  const initialWidth = Number(await handle.getAttribute('aria-valuenow'));
+  const box = (await handle.boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.down();
+  await expect(tooltip).toHaveCount(0);
+  await page.mouse.move(x + 25, y, { steps: 4 });
+  await page.mouse.up();
+  const resizedWidth = Number(await handle.getAttribute('aria-valuenow'));
+  expect(resizedWidth).toBeGreaterThan(initialWidth + 15);
+  await handle.press('ArrowLeft');
+  await expect(handle).toHaveAttribute(
+    'aria-valuenow',
+    String(resizedWidth - 10),
+  );
+  await expect(handle).toBeFocused();
+  await expect(composer).toBeEnabled();
+});
+
 test('reorders projects and saves the order before and after visiting the archive', async ({
   page,
 }) => {
@@ -27,6 +57,8 @@ test('reorders projects and saves the order before and after visiting the archiv
     const x = handle.x + handle.width / 2;
     const y = handle.y + handle.height / 2;
     await page.mouse.move(x, y);
+    const tooltip = page.locator('.ui-tooltip:visible');
+    await expect(tooltip).toContainText('Drag to Reorder');
     await page.mouse.down();
     await page.mouse.move(x, y + 8, { steps: 4 });
     await expect(page.locator('body > .project-sortable-drag')).toBeVisible();

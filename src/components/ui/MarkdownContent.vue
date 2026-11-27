@@ -15,6 +15,10 @@
         @pointerdown="beginPointerActivation"
         @pointermove="trackPointerActivation"
         @pointercancel="cancelPointerActivation"
+        @pointerover="handleActionPointerOver"
+        @pointerout="handleActionPointerOut"
+        @focusin="handleActionFocus"
+        @focusout="clearActionHint"
         v-html="rendered"
       ></div>
     </UiContextMenu>
@@ -30,6 +34,13 @@
       >
     </Teleport>
     <!-- eslint-enable vue/no-v-html -->
+    <UiTooltip
+      v-if="actionHint"
+      :anchor="actionHint.button"
+      :text="actionHint.label"
+      open
+      @update:open="clearActionHint"
+    />
     <DiagramViewer
       v-if="viewer"
       :svg="viewer.svg"
@@ -63,11 +74,11 @@ import {
   type FilePreviewDescriptor,
 } from '../../lib/file-preview';
 import {
-  CODE_COPY_ATTRIBUTE,
-  DIAGRAM_EXPAND_ATTRIBUTE,
   FILE_PATH_ATTRIBUTE,
   isPathOpenGesture,
   isWebUrl,
+  type MarkdownAction,
+  markdownActionAt,
   parseMarkdownFileDestination,
   renderMarkdown,
   resolveFilePath,
@@ -77,6 +88,7 @@ import { invokeTraced } from '../../lib/telemetry';
 import DiagramViewer from './DiagramViewer.vue';
 import UiContextMenu from './UiContextMenu.vue';
 import type { UiMenuItem } from './UiMenu.vue';
+import UiTooltip from './UiTooltip.vue';
 
 const props = defineProps<{
   source: string;
@@ -199,10 +211,46 @@ async function openWebLink(href: string): Promise<void> {
   }
 }
 
-function copyButtonAt(target: EventTarget | null): HTMLElement | null {
-  if (!(target instanceof Element)) return null;
-  const button = target.closest(`button[${CODE_COPY_ATTRIBUTE}]`);
-  return button instanceof HTMLElement ? button : null;
+const actionHint = ref<MarkdownAction>();
+let actionHintTimer: ReturnType<typeof setTimeout> | undefined;
+
+function clearActionHint(): void {
+  clearTimeout(actionHintTimer);
+  actionHint.value = undefined;
+}
+
+function handleActionPointerOver(event: PointerEvent): void {
+  if (event.pointerType === 'touch' || event.buttons) return;
+  const action = markdownActionAt(event.target, markdownRoot.value);
+  if (
+    !action ||
+    (event.relatedTarget instanceof Node &&
+      action.button.contains(event.relatedTarget))
+  )
+    return;
+  clearActionHint();
+  actionHintTimer = setTimeout(() => {
+    if (action.button.isConnected) actionHint.value = action;
+  }, 450);
+}
+
+function handleActionPointerOut(event: PointerEvent): void {
+  const action = markdownActionAt(event.target, markdownRoot.value);
+  if (
+    action &&
+    !(
+      event.relatedTarget instanceof Node &&
+      action.button.contains(event.relatedTarget)
+    )
+  )
+    clearActionHint();
+}
+
+function handleActionFocus(event: FocusEvent): void {
+  const action = markdownActionAt(event.target, markdownRoot.value);
+  if (!action?.button.matches(':focus-visible')) return;
+  clearActionHint();
+  actionHint.value = action;
 }
 
 interface DiagramView {
@@ -215,12 +263,6 @@ interface DiagramView {
 
 const viewer = ref<DiagramView | null>(null);
 let viewerTrigger: HTMLElement | undefined;
-
-function expandButtonAt(target: EventTarget | null): HTMLElement | null {
-  if (!(target instanceof Element)) return null;
-  const button = target.closest(`button[${DIAGRAM_EXPAND_ATTRIBUTE}]`);
-  return button instanceof HTMLElement ? button : null;
-}
 
 /** The natural coordinate bounds the renderer named on the drawing. */
 function diagramBounds(svg: SVGSVGElement): {
@@ -524,15 +566,11 @@ async function activateFilePath(
 }
 
 async function activate(event: Event): Promise<void> {
-  const copy = copyButtonAt(event.target);
-  if (copy) {
-    await copyCodeBlock(copy);
-    return;
-  }
-
-  const expand = expandButtonAt(event.target);
-  if (expand) {
-    openDiagram(expand);
+  const action = markdownActionAt(event.target, markdownRoot.value);
+  if (action) {
+    clearActionHint();
+    if (action.kind === 'copyCode') await copyCodeBlock(action.button);
+    else openDiagram(action.button);
     return;
   }
 
@@ -575,7 +613,7 @@ async function activate(event: Event): Promise<void> {
 function handleKeydown(event: KeyboardEvent): void {
   // A copy or expand button is a button: the browser turns Enter and Space
   // into a click, so handling those here as well would act twice.
-  if (copyButtonAt(event.target) || expandButtonAt(event.target)) return;
+  if (markdownActionAt(event.target, markdownRoot.value)) return;
   const remotePathButton =
     props.copyPaths &&
     event.key === ' ' &&
@@ -585,6 +623,7 @@ function handleKeydown(event: KeyboardEvent): void {
 }
 
 function beginPointerActivation(event: PointerEvent): void {
+  clearActionHint();
   const link = linkAt(event.target);
   pointerActivation =
     event.button === 0 && link
@@ -619,12 +658,15 @@ watch(
   ],
   invalidateFeedback,
 );
+watch(rendered, clearActionHint);
+
 onMounted(() => {
   window.addEventListener('resize', updateFeedbackPosition);
   document.addEventListener('scroll', updateFeedbackPosition, true);
 });
 onBeforeUnmount(() => {
   mounted = false;
+  clearActionHint();
   window.removeEventListener('resize', updateFeedbackPosition);
   document.removeEventListener('scroll', updateFeedbackPosition, true);
   clearCopied();

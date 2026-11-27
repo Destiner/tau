@@ -1,12 +1,11 @@
 <template>
   <input
     ref="input"
-    class="ui-input"
+    v-model="modelValue"
+    :class="{ 'ui-input': variant !== 'unstyled' }"
     :data-error="error || undefined"
     :data-variant="variant"
-    :value="modelValue"
     v-bind="$attrs"
-    @input="handleInput"
   />
 </template>
 
@@ -17,7 +16,7 @@ const modelValue = defineModel<string>({ default: '' });
 
 withDefaults(
   defineProps<{
-    variant?: 'bordered' | 'mono' | 'bare';
+    variant?: 'bordered' | 'mono' | 'bare' | 'unstyled';
     error?: boolean;
   }>(),
   { variant: 'bordered' },
@@ -26,10 +25,6 @@ withDefaults(
 defineOptions({ inheritAttrs: false });
 
 const input = ref<HTMLInputElement>();
-
-function handleInput(event: Event): void {
-  modelValue.value = (event.target as HTMLInputElement).value;
-}
 
 defineExpose({
   get input() {
