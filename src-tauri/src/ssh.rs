@@ -48,10 +48,6 @@ pub struct SshConnection {
 impl SshConnection {
     pub fn parse(connection_string: &str) -> Result<Self, String> {
         let connection_string = connection_string.trim();
-        if connection_string.is_empty() {
-            return Err("Enter an SSH connection string.".into());
-        }
-
         let mut words = ssh_words(connection_string)?;
         if words.is_empty() {
             return Err("Enter an SSH connection string.".into());
@@ -122,12 +118,12 @@ impl SshConnection {
 }
 
 fn ssh_words(connection_string: &str) -> Result<Vec<String>, String> {
-    shell_words::split(connection_string.trim())
+    shell_words::split(connection_string)
         .map_err(|error| format!("Could not parse the SSH connection string: {error}"))
 }
 
 pub(crate) fn reusable_destination(connection_string: &str) -> Option<SshDestination> {
-    let mut words = ssh_words(connection_string).ok()?;
+    let mut words = ssh_words(connection_string.trim()).ok()?;
     let first = words.first()?;
     if first == "ssh" {
         words.remove(0);

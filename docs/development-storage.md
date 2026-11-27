@@ -125,10 +125,9 @@ projects. Successful imports update the list in the same atomic write as the
 project registration. Removing a project keeps its destination; using that
 row's × removes only the suggestion. A later import can add it again.
 
-Production keeps the list across restarts. Native development retains it across
-frontend reloads but drops it when the disposable profile resets on process
-restart. Browser scenario history is simulated and does not verify native disk
-persistence.
+Production keeps the list across restarts. Native development keeps it across
+frontend reloads, but not process restarts. Browser scenarios simulate history
+in memory.
 
 ## Production and architecture
 

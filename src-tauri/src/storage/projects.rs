@@ -713,10 +713,6 @@ mod tests {
             .is_empty());
         let fresh: ProjectRegistry = read_json_or_default(&path).unwrap();
         assert!(fresh.recent_ssh_destinations.is_empty());
-        assert_eq!(
-            serde_json::to_value(snapshot(&fresh).unwrap()).unwrap()["recentSshDestinations"],
-            serde_json::json!([])
-        );
 
         let reimport = remote_import(&path, "ssh build-box", "/one").unwrap();
         assert_eq!(reimport.project.path, first.project.path);

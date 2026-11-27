@@ -22,7 +22,6 @@ import {
   targetRemoteConnection,
   targetRemoteDestination,
   targetRemoteDirectory,
-  targetRemoteLabel,
 } from '../../tests/support/pi-scenario/project-opening';
 import {
   state,
@@ -101,6 +100,7 @@ const TARGET_PROJECT_PATH = targetProjectPath;
 const REMOTE_CONNECTION = 'ssh fixture@example';
 const REMOTE_WORKING_DIRECTORY = '/remote/tau-project';
 const TARGET_REMOTE_HOST = 'resolved-target';
+const TARGET_REMOTE_REPLAY = 'ssh -p 2222 target@example';
 const SESSION_ID = 'session-main';
 const SESSION_PATH = `${PROJECT_PATH}/session-main.jsonl`;
 const MAIN_SESSION = { id: SESSION_ID, path: SESSION_PATH, name: 'Main' };
@@ -670,9 +670,7 @@ function targetConnection(
   const connectionString = requiredString(args, 'connectionString', command);
   if (
     connectionString !== targetRemoteConnection &&
-    connectionString !== targetRemoteLabel &&
-    connectionString !==
-      `ssh -p ${targetRemoteDestination.port} ${targetRemoteDestination.user}@${targetRemoteDestination.host}`
+    connectionString !== TARGET_REMOTE_REPLAY
   ) {
     throw new Error(`${command} did not use the fixture destination and port.`);
   }
