@@ -117,9 +117,11 @@ the save, and another save for that project is blocked until it settles.
 
 ## Local surfaces
 
-Activating a focused project header makes that project active and expands it. Its
-separate chevron controls folding only; it does not activate the project. Right
-expands and Left collapses the project when either control has focus.
+Click or activate a project name or its chevron to expand or collapse the session
+list without switching sessions. Right expands and Left collapses when either
+control has focus. The chevron and **New Session** button appear on project-header
+hover or keyboard focus. **New Session** expands its project if needed and creates
+and selects a fresh session there.
 
 These remain scoped to their existing surface and are excluded from the global
 palette unless their launcher appears above.
