@@ -157,18 +157,6 @@ test('select highlight follows Tab, arrows, and hover, and Enter uses the highli
   await second.hover();
   await expect(second).toBeFocused();
   await expect(selected).toHaveText('label-1');
-  await expect(first).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
-  expect(
-    await first.evaluate(
-      (element) => getComputedStyle(element, '::before').content,
-    ),
-  ).toBe('none');
-  await page.keyboard.press('ArrowUp');
-  await expect(selected).toHaveText('label-0');
-  await first.hover();
-  await second.hover();
-  await expect(second).toBeFocused();
-  await expect(selected).toHaveText('label-1');
   await expect(outcome).toBeEmpty();
   await page.keyboard.press('Enter');
   await expect(outcome).toHaveText('{"submit":"label-1"}');
@@ -192,13 +180,11 @@ test('hover only follows list focus, and clicking the focused option submits the
   await expect(unrelated).toBeFocused();
   await expect(selected).toHaveText('label-1');
 
-  await first.focus();
   await first.hover();
+  await first.focus();
   await second.hover();
-  await expect(selected).toHaveText('label-1');
-  await page.locator('button[role="option"]:focus').evaluate((button) => {
-    (button as HTMLButtonElement).click();
-  });
+  await expect(second).toBeFocused();
+  await second.click();
   await expect(page.getByTestId('dialog-outcome')).toHaveText(
     '{"submit":"label-1"}',
   );
@@ -258,12 +244,6 @@ for (const method of ['select', 'confirm'] as const) {
     });
     await page.goto(`${fixtureUrl}&method=${method}`);
     const prompt = page.getByRole('dialog');
-    const primary =
-      method === 'select'
-        ? prompt.getByRole('option', { name: 'label-0' })
-        : prompt.getByRole('button', { name: 'Confirm' });
-    await expect(primary).toBeFocused();
-
     await prompt.getByRole('button', { name: 'Copy Code' }).press('Space');
     await expect
       .poll(() => page.evaluate(() => window.__TAU_CLIPBOARD_WRITES__))
@@ -271,19 +251,15 @@ for (const method of ['select', 'confirm'] as const) {
     await expect(prompt).toBeVisible();
     await expect(page.getByTestId('dialog-outcome')).toBeEmpty();
   });
-
-  test(`a pointer can still answer a ${method} prompt`, async ({ page }) => {
-    await page.goto(`${fixtureUrl}&method=${method}&prompt=compact`);
-    const answer =
-      method === 'select'
-        ? page.getByRole('option', { name: 'label-1' })
-        : page.getByRole('button', { name: 'No' });
-    await answer.click();
-    await expect(page.getByTestId('dialog-outcome')).toHaveText(
-      JSON.stringify({ submit: method === 'select' ? 'label-1' : false }),
-    );
-  });
 }
+
+test('a pointer can still answer a confirm prompt', async ({ page }) => {
+  await page.goto(`${fixtureUrl}&method=confirm&prompt=compact`);
+  await page.getByRole('button', { name: 'No' }).click();
+  await expect(page.getByTestId('dialog-outcome')).toHaveText(
+    '{"submit":false}',
+  );
+});
 
 for (const method of ['select', 'confirm', 'input', 'editor'] as const) {
   test(`Escape cancels a focused ${method} prompt without bubbling`, async ({

@@ -7,7 +7,6 @@
     :aria-label="title"
     :aria-busy="submitting || undefined"
     @keydown.capture="handleKeydown"
-    @keyup.capture="preventChoiceSpace"
     @submit.prevent="handleSubmit"
   >
     <MarkdownText
@@ -32,6 +31,8 @@
       ref="optionList"
       class="extension-prompt-options"
       role="listbox"
+      @keydown.space.prevent
+      @keyup.space.prevent
     >
       <button
         v-for="(option, index) in options"
@@ -93,7 +94,11 @@
       {{ error }}
     </p>
 
-    <footer class="extension-prompt-actions">
+    <footer
+      class="extension-prompt-actions"
+      @keydown.space="preventChoiceSpace"
+      @keyup.space="preventChoiceSpace"
+    >
       <template v-if="method === 'confirm'">
         <UiButton
           ref="primaryAction"
@@ -123,7 +128,6 @@
         Submit
       </UiButton>
       <UiButton
-        ref="cancelAction"
         variant="secondary"
         type="button"
         :disabled="submitting || disabled"
@@ -136,7 +140,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 
 import useDisabledFocusRepair, {
   topModal,
@@ -178,7 +182,9 @@ const prompt = ref<HTMLFormElement>();
 const optionList = ref<HTMLDivElement>();
 const primaryAction = ref<InstanceType<typeof UiButton>>();
 const negativeAction = ref<InstanceType<typeof UiButton>>();
-const cancelAction = ref<InstanceType<typeof UiButton>>();
+const isChoice = computed(
+  () => props.method === 'select' || props.method === 'confirm',
+);
 const selectedIndex = ref(0);
 let escapeClaimed = false;
 
@@ -264,24 +270,13 @@ function cancel(): void {
 }
 
 function preventChoiceSpace(event: KeyboardEvent): void {
-  const target = event.target;
-  if (event.key !== ' ' || !(target instanceof HTMLButtonElement)) return;
-  if (props.method !== 'select' && props.method !== 'confirm') return;
-  if (
-    optionList.value?.contains(target) ||
-    target === primaryAction.value?.button ||
-    target === negativeAction.value?.button ||
-    target === cancelAction.value?.button
-  ) {
-    event.preventDefault();
-  }
+  if (isChoice.value) event.preventDefault();
 }
 
 function handleKeydown(event: KeyboardEvent): void {
-  preventChoiceSpace(event);
-  const choice = props.method === 'select' || props.method === 'confirm';
-  const composing = event.isComposing || (choice && event.keyCode === 229);
-  if (choice && event.key === 'Enter' && (composing || event.repeat)) {
+  const composing =
+    event.isComposing || (isChoice.value && event.keyCode === 229);
+  if (isChoice.value && event.key === 'Enter' && (composing || event.repeat)) {
     event.preventDefault();
     event.stopPropagation();
     return;
@@ -312,7 +307,9 @@ function handleKeydown(event: KeyboardEvent): void {
     return;
   }
 
-  if (choice) handleChoiceKeydown(event);
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    moveChoiceFocus(event);
+  }
 }
 
 function handleSubmit(): void {
@@ -326,26 +323,18 @@ function handleSubmit(): void {
   emit('submit', draft.value);
 }
 
-function handleChoiceKeydown(event: KeyboardEvent): void {
+function moveChoiceFocus(event: KeyboardEvent): void {
   const target = event.target;
   if (!(target instanceof HTMLButtonElement)) return;
 
-  const moving = event.key === 'ArrowDown' || event.key === 'ArrowUp';
-  if (props.method === 'select' && optionList.value?.contains(target)) {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      const value = props.options?.[selectedIndex.value];
-      if (value !== undefined) chooseOption(value);
-    } else if (moving) {
-      event.preventDefault();
-      const options = optionList.value.querySelectorAll('button');
-      const delta = event.key === 'ArrowDown' ? 1 : -1;
-      const next =
-        (selectedIndex.value + delta + options.length) % options.length;
-      selectedIndex.value = next;
-      options[next]?.focus({ preventScroll: true });
-    }
-  } else if (props.method === 'confirm' && moving) {
+  if (optionList.value?.contains(target)) {
+    event.preventDefault();
+    const options = optionList.value.querySelectorAll('button');
+    const delta = event.key === 'ArrowDown' ? 1 : -1;
+    const next =
+      (selectedIndex.value + delta + options.length) % options.length;
+    options[next]?.focus({ preventScroll: true });
+  } else if (props.method === 'confirm') {
     const confirmButton = primaryAction.value?.button;
     const noButton = negativeAction.value?.button;
     if (target !== confirmButton && target !== noButton) return;
