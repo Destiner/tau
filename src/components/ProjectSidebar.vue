@@ -61,8 +61,9 @@
                   class="project-select"
                   type="button"
                   tabindex="0"
+                  :aria-expanded="!project.collapsed"
                   :disabled="projectActionsDisabled"
-                  @click="() => handleProjectSelect(project)"
+                  @click="() => handleProjectToggle(project)"
                 >
                   <UiStatusDot
                     v-if="projectIndicator(project)"
@@ -74,9 +75,10 @@
                 </button>
               </UiTooltip>
               <UiIconButton
-                class="project-toggle"
+                class="project-toggle project-header-action"
                 tabindex="0"
                 size="md"
+                variant="reveal"
                 :label="`${project.collapsed ? 'Expand' : 'Collapse'} ${project.name}`"
                 :aria-expanded="!project.collapsed"
                 :disabled="projectActionsDisabled"
@@ -86,6 +88,28 @@
                   :name="project.collapsed ? 'chevron-right' : 'chevron-down'"
                 />
               </UiIconButton>
+              <UiTooltip
+                :text="newSessionHint(project)?.title ?? 'New Session'"
+                :shortcut="newSessionHint(project)?.shortcut"
+              >
+                <UiIconButton
+                  class="project-header-action"
+                  tabindex="0"
+                  size="md"
+                  variant="reveal"
+                  :label="`New Session in ${project.name}`"
+                  :disabled="
+                    projectActionsDisabled ||
+                    newSessionHint(project)?.available === false
+                  "
+                  @click="() => handleNewSession(project)"
+                >
+                  <UiIcon
+                    class="project-new-session-icon"
+                    name="plus"
+                  />
+                </UiIconButton>
+              </UiTooltip>
             </div>
           </UiContextMenu>
 
@@ -301,6 +325,7 @@ import { adminMode } from '../lib/admin-mode';
 import {
   appCommandDispatchKey,
   appCommandLookupKey,
+  type AppCommandHint,
 } from '../lib/app-commands/binding';
 import {
   applyHeldOrder,
@@ -337,7 +362,6 @@ const emit = defineEmits<{
 }>();
 
 const {
-  activateProject,
   addLocalProject,
   archiveSession,
   canArchiveSession,
@@ -526,13 +550,8 @@ function sessionTarget(
   return { projectPath: project.path, sessionId: session.id };
 }
 
-function handleProjectSelect(project: ProjectSummary): void {
-  if (projectActionsDisabled.value) return;
-  activateProject(project);
-  // Explicit navigation must reveal its session even while background order is held.
-  if (heldOrder.value.has(project.path)) {
-    heldOrder.value.set(project.path, heldSessions(projectSessions(project)));
-  }
+function newSessionHint(project: ProjectSummary): AppCommandHint | undefined {
+  return commandHint?.('session.new', projectTarget(project));
 }
 
 function handleProjectToggle(project: ProjectSummary): void {
@@ -547,11 +566,21 @@ function handleProjectToggle(project: ProjectSummary): void {
 }
 
 function handleNewSession(project: ProjectSummary): void {
+  const previousSessionId = state.activeSessionId;
   if (appCommandDispatch) {
     appCommandDispatch('session.new', projectTarget(project));
-    return;
+  } else {
+    void newSession(project);
   }
-  newSession(project);
+
+  // Creation selects synchronously, before runtime startup. Reveal only its project.
+  if (
+    state.activeProjectPath === project.path &&
+    state.activeSessionId !== previousSessionId &&
+    heldOrder.value.has(project.path)
+  ) {
+    heldOrder.value.set(project.path, heldSessions(projectSessions(project)));
+  }
 }
 
 function projectActionAnchor(path: string): HTMLButtonElement | undefined {
@@ -640,16 +669,15 @@ function projectMenuItems(): UiMenuItem[] {
 
 function projectActionItems(project: ProjectSummary): UiMenuItem[] {
   const target = projectTarget(project);
-  const newSessionHint = commandHint?.('session.new', target);
+  const newHint = newSessionHint(project);
   const renameHint = commandHint?.('project.rename', target);
   const removeHint = commandHint?.('project.remove', target);
   return [
     {
-      label: newSessionHint?.title ?? 'New Session',
+      label: newHint?.title ?? 'New Session',
       icon: 'note-pencil',
-      shortcut: newSessionHint?.shortcut,
-      disabled:
-        projectActionsDisabled.value || newSessionHint?.available === false,
+      shortcut: newHint?.shortcut,
+      disabled: projectActionsDisabled.value || newHint?.available === false,
       run: () => handleNewSession(project),
     },
     {
@@ -962,6 +990,7 @@ defineExpose({
   position: relative;
   align-items: center;
   min-width: 0;
+  padding-right: 2px;
   border-radius: 7px;
   gap: 0;
 }
@@ -1014,12 +1043,38 @@ defineExpose({
   gap: 3px;
 }
 
+.project-row > .project-header-action[data-size='md'] {
+  width: var(--control-sm);
+}
+
+.project-header-action:disabled {
+  --project-action-opacity: 0.45;
+}
+
+.project-row:hover > .project-header-action[data-reveal],
+.project-row:has(> :focus-visible) > .project-header-action[data-reveal] {
+  opacity: var(--project-action-opacity, 0.65);
+}
+
+.project-row > .project-header-action[data-reveal]:focus-visible,
+.project-row > .project-header-action[data-reveal]:hover:not(:disabled) {
+  opacity: 1;
+}
+
+.project-toggle {
+  margin-right: 2px;
+}
+
 /* stylelint-disable-next-line no-descending-specificity */
 .project-toggle svg {
   flex: none;
   width: 11px;
   transform: translateY(1px);
   color: var(--muted);
+}
+
+.project-new-session-icon {
+  translate: -2px;
 }
 
 /* Nudged down with the chevron so both sit on the label's optical center. The
