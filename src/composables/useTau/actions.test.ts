@@ -50,11 +50,13 @@ vi.mock('@tauri-apps/api/core', () => ({
         return mocks.modelScope;
       }
       if (command === 'import_project' || command === 'import_remote_project') {
-        return (
+        const project =
           mocks.workspace?.projects.find(
-            (project) => project.path === args?.path,
-          ) ?? mocks.workspace?.projects[0]
-        );
+            (candidate) => candidate.path === args?.path,
+          ) ?? mocks.workspace?.projects[0];
+        return command === 'import_remote_project'
+          ? { project, recentSshDestinations: [] }
+          : project;
       }
       if (command === 'register_session') {
         return (

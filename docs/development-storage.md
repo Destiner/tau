@@ -113,6 +113,23 @@ Production registry names survive application restarts. Native storage tests
 verify persistence by reading the same saved registry again, independently of
 the browser fake and development-profile reset policy.
 
+## Recent SSH destinations
+
+Open Remote Project remembers the SSH alias or host, user, and explicit port
+only after a folder is successfully imported. Probing, browsing, and
+reconnecting do not update the list. Inputs with other SSH options or custom
+executables still work manually but are not saved as suggestions.
+
+The list starts empty, even when `projects.json` already contains remote
+projects. Successful imports update the list in the same atomic write as the
+project registration. Removing a project keeps its destination; using that
+row's × removes only the suggestion. A later import can add it again.
+
+Production keeps the list across restarts. Native development retains it across
+frontend reloads but drops it when the disposable profile resets on process
+restart. Browser scenario history is simulated and does not verify native disk
+persistence.
+
 ## Production and architecture
 
 The native `dev` compile-time configuration selects ephemeral storage; production

@@ -4,9 +4,11 @@ use super::{
 };
 use crate::{
     models::{
-        ProjectRecord, ProjectRegistry, ProjectSummary, RemoteProjectRecord, WorkspaceSnapshot,
+        ProjectRecord, ProjectRegistry, ProjectSummary, RemoteProjectImportResult,
+        RemoteProjectRecord, SshDestination, WorkspaceSnapshot,
     },
     pi::resolve_pi_binary,
+    ssh::reusable_destination,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -59,6 +61,7 @@ pub(super) fn snapshot(registry: &ProjectRegistry) -> Result<WorkspaceSnapshot, 
         active_project_path: registry.active_project_path.clone(),
         pi_path: resolve_pi_binary().map(|path| path.to_string_lossy().into_owned()),
         projects,
+        recent_ssh_destinations: registry.recent_ssh_destinations.clone(),
     })
 }
 
@@ -115,16 +118,44 @@ fn register_remote_project(
     working_directory: String,
     host: String,
 ) -> String {
-    if let Some(project) = registry.projects.iter_mut().find(|project| {
-        project.remote.as_ref().is_some_and(|remote| {
-            remote.connection_string == connection_string
-                && remote.working_directory == working_directory
+    let destination = reusable_destination(&connection_string);
+    if let Some(destination) = destination.as_ref() {
+        registry
+            .recent_ssh_destinations
+            .retain(|recent| recent != destination);
+        registry
+            .recent_ssh_destinations
+            .insert(0, destination.clone());
+    }
+
+    let exact = registry
+        .projects
+        .iter_mut()
+        .filter(|project| {
+            project.remote.as_ref().is_some_and(|remote| {
+                remote.connection_string == connection_string
+                    && remote.working_directory == working_directory
+            })
         })
-    }) {
+        .min_by_key(|project| project.path != path);
+    if let Some(project) = exact {
         if let Some(remote) = project.remote.as_mut() {
             remote.host = host;
         }
         return project.path.clone();
+    }
+
+    // A normalized replay must not overwrite the original connection or metadata.
+    if let Some(destination) = destination {
+        if let Some(project) = registry.projects.iter().find(|project| {
+            project.remote.as_ref().is_some_and(|remote| {
+                remote.working_directory == working_directory
+                    && reusable_destination(&remote.connection_string).as_ref()
+                        == Some(&destination)
+            })
+        }) {
+            return project.path.clone();
+        }
     }
 
     registry.projects.push(ProjectRecord {
@@ -204,7 +235,21 @@ pub(super) fn import_remote_project_inner(
     connection_string: String,
     working_directory: String,
     host: String,
-) -> Result<ProjectSummary, String> {
+) -> Result<RemoteProjectImportResult, String> {
+    import_remote_project_at(
+        &project_registry_path()?,
+        connection_string,
+        working_directory,
+        host,
+    )
+}
+
+fn import_remote_project_at(
+    registry_path: &Path,
+    connection_string: String,
+    working_directory: String,
+    host: String,
+) -> Result<RemoteProjectImportResult, String> {
     let connection_string = connection_string.trim().to_string();
     let working_directory = working_directory.trim_end_matches('/').to_string();
     let working_directory = if working_directory.is_empty() {
@@ -219,7 +264,7 @@ pub(super) fn import_remote_project_inner(
     let new_path = remote_project_path(&connection_string, &working_directory)?;
 
     let mut imported_path = new_path.clone();
-    let registry = mutate_projects(|registry| {
+    let registry = mutate_projects_at(registry_path, |registry| {
         imported_path = register_remote_project(
             registry,
             &new_path,
@@ -234,7 +279,29 @@ pub(super) fn import_remote_project_inner(
         .iter()
         .find(|project| project.path == imported_path)
         .ok_or_else(|| "The remote project is no longer available.".to_string())?;
-    project_summary(project, &registry.active_project_path)
+    Ok(RemoteProjectImportResult {
+        project: project_summary(project, &registry.active_project_path)?,
+        recent_ssh_destinations: registry.recent_ssh_destinations,
+    })
+}
+
+pub(super) fn forget_ssh_destination_inner(
+    destination: SshDestination,
+) -> Result<Vec<SshDestination>, String> {
+    forget_ssh_destination_at(&project_registry_path()?, &destination)
+}
+
+fn forget_ssh_destination_at(
+    registry_path: &Path,
+    destination: &SshDestination,
+) -> Result<Vec<SshDestination>, String> {
+    mutate_projects_at(registry_path, |registry| {
+        registry
+            .recent_ssh_destinations
+            .retain(|recent| recent != destination);
+        Ok(())
+    })
+    .map(|registry| registry.recent_ssh_destinations)
 }
 
 fn normalized_project_name(name: &str) -> Result<String, String> {
@@ -272,7 +339,11 @@ fn rename_project_at(registry_path: &Path, path: &str, name: &str) -> Result<Str
 }
 
 pub(super) fn remove_project_inner(path: String) -> Result<(), String> {
-    mutate_projects(|registry| {
+    remove_project_at(&project_registry_path()?, &path)
+}
+
+fn remove_project_at(registry_path: &Path, path: &str) -> Result<(), String> {
+    mutate_projects_at(registry_path, |registry| {
         registry.projects.retain(|project| project.path != path);
         if registry.active_project_path == path {
             registry.active_project_path.clear();
@@ -313,7 +384,9 @@ pub(super) fn reorder_projects_inner(project_paths: Vec<String>) -> Result<(), S
 
 #[cfg(test)]
 mod tests {
-    use super::super::registry::{configured_pi_agent_dir, default_session_dir};
+    use super::super::registry::{
+        configured_pi_agent_dir, default_session_dir, read_json_or_default, write_json_atomic,
+    };
     use super::*;
     use crate::models::RemoteSessionRecord;
     use std::ffi::{OsStr, OsString};
@@ -358,7 +431,6 @@ mod tests {
 
     #[test]
     fn rename_persists_only_names_and_preserves_session_files() {
-        use super::super::registry::{read_json_or_default, write_json_atomic};
         use std::fs;
         let profile = crate::profile::StorageProfile::ephemeral().unwrap();
         let path = profile.data_dir().join("projects.json");
@@ -414,6 +486,7 @@ mod tests {
         })
         .unwrap();
         expected["projects"][1]["remote"]["host"] = serde_json::json!("refreshed-host");
+        expected["recentSshDestinations"] = serde_json::json!([{ "host": "offline.invalid" }]);
         assert_eq!(serde_json::to_value(&reimported).unwrap(), expected);
         let fresh: ProjectRegistry = read_json_or_default(&path).unwrap();
         assert_eq!(serde_json::to_value(&fresh).unwrap(), expected);
@@ -498,13 +571,14 @@ mod tests {
 
     #[test]
     fn legacy_registry_load_and_remote_noop_preserve_bytes() {
-        use super::super::registry::read_json_or_default;
         use std::fs;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("projects.json");
         let bytes = serde_json::to_vec(&legacy_registry()).unwrap();
         fs::write(&path, &bytes).unwrap();
         let fresh: ProjectRegistry = read_json_or_default(&path).unwrap();
+        assert!(fresh.recent_ssh_destinations.is_empty());
+        assert_eq!(fs::read(&path).unwrap(), bytes);
         assert_eq!(effective_project_name(&fresh.projects[0]), "project");
         assert_eq!(effective_project_name(&fresh.projects[1]), "work");
         assert_eq!(
@@ -518,7 +592,6 @@ mod tests {
 
     #[test]
     fn concurrent_renames_preserve_other_registry_mutations() {
-        use super::super::registry::{read_json_or_default, write_json_atomic};
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("projects.json");
         write_json_atomic(&path, &legacy_registry()).unwrap();
@@ -557,6 +630,177 @@ mod tests {
         fs::write(&path, b"invalid json").unwrap();
         assert!(rename_project_at(&path, "/absent", "Name").is_err());
         assert_eq!(fs::read(&path).unwrap(), b"invalid json");
+    }
+
+    fn remote_import(
+        path: &Path,
+        connection: &str,
+        folder: &str,
+    ) -> Result<RemoteProjectImportResult, String> {
+        import_remote_project_at(
+            path,
+            connection.into(),
+            folder.into(),
+            "reported-host".into(),
+        )
+    }
+
+    #[test]
+    fn recent_ssh_destinations_survive_removal_and_can_be_forgotten_and_reimported() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("projects.json");
+        let alias = reusable_destination("ssh build-box").unwrap();
+        let account = reusable_destination("ssh -p22 dev@build-box").unwrap();
+        let implicit_port = reusable_destination("ssh dev@build-box").unwrap();
+        let first = remote_import(&path, "ssh build-box", "/one").unwrap();
+        assert_eq!(first.recent_ssh_destinations, std::slice::from_ref(&alias));
+        let wire = serde_json::to_value(&first).unwrap();
+        assert_eq!(wire["project"]["path"], first.project.path);
+        assert_eq!(
+            wire["recentSshDestinations"],
+            serde_json::json!([{ "host": "build-box" }])
+        );
+
+        let second = remote_import(&path, "ssh dev@build-box -p22", "/one").unwrap();
+        assert_eq!(
+            second.recent_ssh_destinations,
+            [account.clone(), alias.clone()]
+        );
+        let distinct = remote_import(&path, "ssh dev@build-box", "/one").unwrap();
+        assert_ne!(distinct.project.path, second.project.path);
+        let different_folder = remote_import(&path, "build-box", "/two").unwrap();
+        assert_ne!(different_folder.project.path, first.project.path);
+        assert_eq!(
+            different_folder.recent_ssh_destinations,
+            [alias.clone(), implicit_port.clone(), account.clone()]
+        );
+
+        let explicit_reimport = remote_import(&path, "ssh -p 22 dev@build-box", "/one/").unwrap();
+        assert_eq!(explicit_reimport.project.path, second.project.path);
+        let expected = [account.clone(), alias.clone(), implicit_port.clone()];
+        assert_eq!(explicit_reimport.recent_ssh_destinations, expected);
+        let stored: ProjectRegistry = read_json_or_default(&path).unwrap();
+        assert_eq!(stored.projects.len(), 4);
+        assert_eq!(stored.recent_ssh_destinations, expected);
+        let workspace = serde_json::to_value(snapshot(&stored).unwrap()).unwrap();
+        assert_eq!(
+            workspace["recentSshDestinations"],
+            serde_json::json!([
+                { "host": "build-box", "user": "dev", "port": 22 },
+                { "host": "build-box" },
+                { "host": "build-box", "user": "dev" }
+            ])
+        );
+
+        for project in &stored.projects {
+            remove_project_at(&path, &project.path).unwrap();
+        }
+        let empty: ProjectRegistry = read_json_or_default(&path).unwrap();
+        assert!(empty.projects.is_empty());
+        assert_eq!(empty.recent_ssh_destinations, expected);
+
+        let forgotten = forget_ssh_destination_at(&path, &alias).unwrap();
+        assert_eq!(forgotten, [account.clone(), implicit_port.clone()]);
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(forget_ssh_destination_at(&path, &alias).unwrap(), forgotten);
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        assert_eq!(
+            forget_ssh_destination_at(&path, &account).unwrap(),
+            std::slice::from_ref(&implicit_port)
+        );
+        assert!(forget_ssh_destination_at(&path, &implicit_port)
+            .unwrap()
+            .is_empty());
+        let fresh: ProjectRegistry = read_json_or_default(&path).unwrap();
+        assert!(fresh.recent_ssh_destinations.is_empty());
+        assert_eq!(
+            serde_json::to_value(snapshot(&fresh).unwrap()).unwrap()["recentSshDestinations"],
+            serde_json::json!([])
+        );
+
+        let reimport = remote_import(&path, "ssh build-box", "/one").unwrap();
+        assert_eq!(reimport.project.path, first.project.path);
+        assert_eq!(
+            reimport.recent_ssh_destinations,
+            std::slice::from_ref(&alias)
+        );
+        let fresh: ProjectRegistry = read_json_or_default(&path).unwrap();
+        assert_eq!(fresh.recent_ssh_destinations, [alias]);
+    }
+
+    #[test]
+    fn recent_ssh_mutations_only_commit_with_the_registry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("projects.json");
+        let first = remote_import(&path, "ssh build-box", "/one").unwrap();
+        let destination = &first.recent_ssh_destinations[0];
+        let bytes = std::fs::read(&path).unwrap();
+        let blocked_write = path.with_extension("tmp");
+        std::fs::create_dir(&blocked_write).unwrap();
+
+        let invalid = remote_import(&path, "ssh other-box", "not-absolute").unwrap_err();
+        assert!(invalid.contains("directory is invalid"));
+        let write_error = remote_import(&path, "ssh other-box", "/one").unwrap_err();
+        assert!(write_error.contains("Could not write"));
+        assert!(forget_ssh_destination_at(&path, destination).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+
+        std::fs::remove_dir(blocked_write).unwrap();
+        assert!(forget_ssh_destination_at(&path, destination)
+            .unwrap()
+            .is_empty());
+        let fresh: ProjectRegistry = read_json_or_default(&path).unwrap();
+        let before: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            serde_json::to_value(&fresh.projects).unwrap(),
+            before["projects"]
+        );
+        let advanced = remote_import(&path, "ssh -J jump build-box", "/one").unwrap();
+        assert_ne!(advanced.project.path, first.project.path);
+        assert_eq!(
+            advanced.project.connection_string.as_deref(),
+            Some("ssh -J jump build-box")
+        );
+        assert!(advanced.recent_ssh_destinations.is_empty());
+    }
+
+    #[test]
+    fn normalized_remote_replay_preserves_records_and_prefers_exact_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("projects.json");
+        let mut registry = legacy_registry();
+        registry.projects[1].name = Some("Custom name".into());
+        registry.projects[1].collapsed = true;
+        registry.projects[1]
+            .remote
+            .as_mut()
+            .unwrap()
+            .connection_string = "ssh offline.invalid -p2222".into();
+        registry.active_project_path = registry.projects[1].path.clone();
+        let exact_connection = "ssh -p 2222 offline.invalid";
+        let exact_id = remote_project_path(exact_connection, "/remote/work").unwrap();
+        let mut exact_record = registry.projects[1].clone();
+        exact_record.path = exact_id.clone();
+        exact_record.name = Some("Exact name".into());
+        exact_record.remote.as_mut().unwrap().connection_string = exact_connection.into();
+        registry.projects.push(exact_record);
+        write_json_atomic(&path, &registry).unwrap();
+
+        let exact = remote_import(&path, exact_connection, "/remote/work").unwrap();
+        assert_eq!(exact.project.path, exact_id);
+        assert_eq!(exact.project.name, "Exact name");
+        registry.projects[2].remote.as_mut().unwrap().host = "reported-host".into();
+        let replay = remote_import(&path, "-p02222 offline.invalid", "/remote/work").unwrap();
+        assert_eq!(replay.project.path, registry.projects[1].path);
+        assert_eq!(replay.project.name, "Custom name");
+        assert!(replay.project.selected);
+        assert_eq!(replay.project.sessions.len(), 2);
+        let fresh: ProjectRegistry = read_json_or_default(&path).unwrap();
+        registry.recent_ssh_destinations = replay.recent_ssh_destinations;
+        assert_eq!(
+            serde_json::to_value(fresh).unwrap(),
+            serde_json::to_value(registry).unwrap()
+        );
     }
 
     #[test]

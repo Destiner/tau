@@ -92,6 +92,7 @@ const TAURI_INVOKE_COMMANDS = [
   'disconnect_cloud_connection',
   'import_project',
   'import_remote_project',
+  'forget_ssh_destination',
   'remove_project',
   'rename_project',
   'set_active_project',

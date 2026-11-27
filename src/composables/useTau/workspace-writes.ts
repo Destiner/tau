@@ -19,6 +19,7 @@ function writeWorkspace<T = void>(
   command:
     | 'import_project'
     | 'import_remote_project'
+    | 'forget_ssh_destination'
     | 'set_project_collapsed'
     | 'reorder_projects'
     | 'remove_project'

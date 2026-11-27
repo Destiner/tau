@@ -127,6 +127,7 @@ function createBrowserSandboxWorkspace(
   const workspace: WorkspaceSnapshot = {
     activeProjectPath: `${ROOT}/atlas`,
     piPath: '/browser-dev/bin/pi',
+    recentSshDestinations: [],
     projects: workspaceSeed.map((project, projectIndex) => ({
       path: `${ROOT}/${project.name}`,
       name: project.name,

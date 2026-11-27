@@ -38,6 +38,18 @@ interface WorkspaceSnapshot {
   activeProjectPath: string;
   piPath: string | null;
   projects: ProjectSummary[];
+  recentSshDestinations?: SshDestination[];
+}
+
+interface SshDestination {
+  host: string;
+  user?: string;
+  port?: number;
+}
+
+interface RemoteProjectImport {
+  project: ProjectSummary;
+  recentSshDestinations: SshDestination[];
 }
 
 interface ProjectSummary {
@@ -383,6 +395,8 @@ const state = reactive({
   remoteConnectionString: '',
   remoteConnectionError: '',
   remoteConnecting: false,
+  remoteForgetPending: false,
+  remoteForgetError: '',
   remoteDirectoryHost: '',
   remoteDirectoryRoot: '',
   remoteWorkingDirectory: '',
@@ -1495,6 +1509,7 @@ function presentRemoteConnectionError(
   clearRemoteDirectoryBrowser();
   state.remoteConnectionError = message;
   state.remoteConnecting = false;
+  state.remoteForgetError = '';
   state.remoteDialogOpen = true;
 }
 
@@ -1713,6 +1728,8 @@ function buildStateSnapshot(): StateSnapshot {
 
 export type {
   WorkspaceSnapshot,
+  SshDestination,
+  RemoteProjectImport,
   ProjectSummary,
   SessionSummary,
   ArchivedSessionEntry,

@@ -287,9 +287,14 @@
       :connection-error="state.remoteConnectionError"
       :connecting="state.remoteConnecting"
       :directory-options="remoteDirectoryOptions"
+      :recent-destinations="state.workspace?.recentSshDestinations"
+      :forget-pending="state.remoteForgetPending"
+      :forget-error="state.remoteForgetError"
       :return-focus="remoteDialogReturnFocus"
       @submit-connection="submitRemoteConnection"
       @choose-directory="handleChooseDirectory"
+      @select-destination="selectRecentSshDestination"
+      @forget-destination="forgetRecentSshDestination"
     />
   </div>
 </template>
@@ -462,6 +467,8 @@ const {
   closeRemoteProjectDialog,
   submitRemoteConnection,
   chooseRemoteDirectory,
+  selectRecentSshDestination,
+  forgetRecentSshDestination,
   newSession,
   sendMessage,
   recoverSession,

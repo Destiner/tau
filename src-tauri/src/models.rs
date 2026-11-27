@@ -9,6 +9,8 @@ pub struct ProjectRegistry {
     pub active_project_path: String,
     #[serde(default)]
     pub projects: Vec<ProjectRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_ssh_destinations: Vec<SshDestination>,
 }
 
 impl Default for ProjectRegistry {
@@ -17,6 +19,7 @@ impl Default for ProjectRegistry {
             version: registry_version(),
             active_project_path: String::new(),
             projects: Vec::new(),
+            recent_ssh_destinations: Vec::new(),
         }
     }
 }
@@ -86,6 +89,24 @@ pub struct WorkspaceSnapshot {
     pub active_project_path: String,
     pub pi_path: Option<String>,
     pub projects: Vec<ProjectSummary>,
+    pub recent_ssh_destinations: Vec<SshDestination>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshDestination {
+    pub host: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteProjectImportResult {
+    pub project: ProjectSummary,
+    pub recent_ssh_destinations: Vec<SshDestination>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
