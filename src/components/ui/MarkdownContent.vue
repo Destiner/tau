@@ -38,8 +38,8 @@
       v-if="actionHint"
       :anchor="actionHint.button"
       :text="actionHint.label"
-      open
-      @update:open="clearActionHint"
+      delegated
+      @dismiss="clearActionHint"
     />
     <DiagramViewer
       v-if="viewer"
@@ -89,6 +89,7 @@ import DiagramViewer from './DiagramViewer.vue';
 import UiContextMenu from './UiContextMenu.vue';
 import type { UiMenuItem } from './UiMenu.vue';
 import UiTooltip from './UiTooltip.vue';
+import { ACTION_TOOLTIP_DELAY } from './action-tooltip';
 
 const props = defineProps<{
   source: string;
@@ -219,31 +220,28 @@ function clearActionHint(): void {
   actionHint.value = undefined;
 }
 
-function handleActionPointerOver(event: PointerEvent): void {
-  if (event.pointerType === 'touch' || event.buttons) return;
+function crossedAction(event: PointerEvent): MarkdownAction | undefined {
   const action = markdownActionAt(event.target, markdownRoot.value);
   if (
-    !action ||
-    (event.relatedTarget instanceof Node &&
-      action.button.contains(event.relatedTarget))
+    event.relatedTarget instanceof Node &&
+    action?.button.contains(event.relatedTarget)
   )
     return;
+  return action;
+}
+
+function handleActionPointerOver(event: PointerEvent): void {
+  if (event.pointerType === 'touch' || event.buttons) return;
+  const action = crossedAction(event);
+  if (!action) return;
   clearActionHint();
   actionHintTimer = setTimeout(() => {
     if (action.button.isConnected) actionHint.value = action;
-  }, 450);
+  }, ACTION_TOOLTIP_DELAY);
 }
 
 function handleActionPointerOut(event: PointerEvent): void {
-  const action = markdownActionAt(event.target, markdownRoot.value);
-  if (
-    action &&
-    !(
-      event.relatedTarget instanceof Node &&
-      action.button.contains(event.relatedTarget)
-    )
-  )
-    clearActionHint();
+  if (crossedAction(event)) clearActionHint();
 }
 
 function handleActionFocus(event: FocusEvent): void {

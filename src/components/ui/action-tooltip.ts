@@ -15,6 +15,7 @@ interface ActionTooltipOptions {
 // avoid Vue treating an absent Boolean-union prop as false.
 type ActionTooltip = ActionTooltipOptions | false;
 
+const ACTION_TOOLTIP_DELAY = 450;
 const activeTooltipId = shallowRef<string>();
 
-export { activeTooltipId, type ActionTooltip };
+export { ACTION_TOOLTIP_DELAY, activeTooltipId, type ActionTooltip };

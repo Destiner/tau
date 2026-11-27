@@ -171,13 +171,10 @@ show their label on hover and on keyboard focus when focusable. Keep one hint
 per control: rich row previews replace default tooltips. Editable fields,
 menu/list options, disabled controls, and content links do not need tooltips.
 
-Shortcut hints use the same formatter as the palette and accurately identify
-any contextual scope. Informational path, status, and session tooltips remain
-informational rather than acquiring invented commands.
-
-Shortcut chips use the same platform notation as the palette. Action hints
-must not steal menu/popover anchors, take Escape from the surface, or create
-fake tab stops.
+Shortcut hints use the palette's platform notation and reflect the actual
+binding and its scope. Don't add shortcuts to informational previews.
+Action hints must not steal menu/popover anchors, take Escape from the
+surface, or create tab stops.
 
 ## Explicit exclusions
 

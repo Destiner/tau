@@ -1,32 +1,24 @@
 <template>
   <TooltipProvider
-    v-if="$slots.default || visible"
+    v-if="$slots.default"
     :delay-duration="delay"
   >
     <TooltipRoot
       :disabled="disabled"
-      :open="Boolean($slots.default && active)"
+      :open="active"
       @update:open="setOpen"
     >
-      <TooltipTrigger
-        v-if="$slots.default"
-        as-child
-      >
+      <TooltipTrigger as-child>
         <slot />
       </TooltipTrigger>
-      <component
-        :is="$slots.default ? TooltipPortal : Teleport"
-        to="body"
-      >
-        <component
-          :is="$slots.default ? TooltipContent : 'div'"
-          :ref="setContent"
+      <TooltipPortal>
+        <TooltipContent
           class="ui-tooltip"
-          :class="[
-            $slots.default ? undefined : 'ui-tooltip-anchored',
-            contentClass,
-          ]"
-          v-bind="$slots.default ? rekaPlacement : externalPlacement"
+          :class="contentClass"
+          :side="side"
+          :align="align"
+          :side-offset="gap"
+          :collision-padding="gap"
         >
           <template v-if="shortcut">
             <span class="ui-tooltip-label">
@@ -39,10 +31,28 @@
             name="content"
             >{{ text }}</slot
           >
-        </component>
-      </component>
+        </TooltipContent>
+      </TooltipPortal>
     </TooltipRoot>
   </TooltipProvider>
+  <Teleport
+    v-else-if="anchor && active"
+    to="body"
+  >
+    <div
+      :id="id"
+      ref="content"
+      class="ui-tooltip ui-tooltip-anchored"
+      :class="contentClass"
+      role="tooltip"
+    >
+      <template v-if="shortcut">
+        <span class="ui-tooltip-label">{{ text }}</span>
+        <kbd class="ui-tooltip-shortcut">{{ formattedShortcut }}</kbd>
+      </template>
+      <template v-else>{{ text }}</template>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -60,15 +70,7 @@ import {
   TooltipRoot,
   TooltipTrigger,
 } from 'reka-ui';
-import {
-  type ComponentPublicInstance,
-  computed,
-  onBeforeUnmount,
-  shallowRef,
-  Teleport,
-  useId,
-  watch,
-} from 'vue';
+import { computed, onBeforeUnmount, shallowRef, useId, watch } from 'vue';
 
 import {
   formatShortcut,
@@ -76,7 +78,7 @@ import {
   type ShortcutPlatform,
 } from '../../lib/app-commands/shortcut';
 
-import { activeTooltipId } from './action-tooltip';
+import { ACTION_TOOLTIP_DELAY, activeTooltipId } from './action-tooltip';
 
 const props = withDefaults(
   defineProps<{
@@ -89,38 +91,25 @@ const props = withDefaults(
     contentClass?: string;
     anchor?: HTMLElement;
     disabled?: boolean;
-    /** Set only when the owning surface delegates events to a shared anchor. */
-    open?: boolean;
+    /** The owning surface mounts the hint in response to delegated events. */
+    delegated?: boolean;
   }>(),
   {
     shortcut: undefined,
     side: 'top',
     align: 'center',
-    delay: 450,
+    delay: ACTION_TOOLTIP_DELAY,
     contentClass: undefined,
     anchor: undefined,
-    open: undefined,
   },
 );
 
-const emit = defineEmits<{ 'update:open': [open: boolean] }>();
+const emit = defineEmits<{ dismiss: [] }>();
 
 const gap = 6;
 const id = `tau-tooltip-${useId()}`;
-const content = shallowRef<HTMLElement>();
+const content = shallowRef<HTMLDivElement | null>(null);
 const active = computed(() => activeTooltipId.value === id);
-const visible = computed(() => Boolean(props.anchor && active.value));
-const rekaPlacement = computed(() => ({
-  side: props.side,
-  align: props.align,
-  sideOffset: gap,
-  collisionPadding: gap,
-}));
-const externalPlacement = { id, role: 'tooltip' };
-
-function setContent(element: Element | ComponentPublicInstance | null): void {
-  content.value = element instanceof HTMLElement ? element : undefined;
-}
 
 function setOpen(open: boolean): void {
   if (open) activeTooltipId.value = id;
@@ -130,11 +119,11 @@ function setOpen(open: boolean): void {
 onBeforeUnmount(() => setOpen(false));
 
 watch(
-  () => [props.anchor, props.disabled, props.open] as const,
-  ([anchor, disabled, requestedOpen], _, onCleanup) => {
+  () => [props.anchor, props.disabled, props.delegated] as const,
+  ([anchor, disabled, delegated], _, onCleanup) => {
     if (!anchor || disabled) return;
-    if (requestedOpen !== undefined) {
-      setOpen(requestedOpen);
+    if (delegated) {
+      setOpen(true);
       onCleanup(() => setOpen(false));
       return;
     }
@@ -174,7 +163,8 @@ watch(
   ([anchor, element, side, align], _, onCleanup) => {
     if (!anchor || !element) return;
     updateDescription(anchor, true);
-    let positioning = true;
+    const listeners = new AbortController();
+    const { signal } = listeners;
     // External hints share placement with Reka's hints but are not dismissible
     // layers: a hint must not take Escape away from its dialog or popover.
     const stop = autoUpdate(anchor, element, () => {
@@ -187,14 +177,14 @@ watch(
           shift({ padding: gap }),
         ],
       }).then(({ x, y }) => {
-        if (!positioning) return;
+        if (signal.aborted) return;
         element.style.transform = `translate(${x}px, ${y}px)`;
         element.style.visibility = 'visible';
       });
     });
     const dismiss = (): void => {
       setOpen(false);
-      if (props.open !== undefined) emit('update:open', false);
+      if (props.delegated) emit('dismiss');
     };
     const onKeydown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') dismiss();
@@ -203,14 +193,13 @@ watch(
       if (event.target instanceof Node && event.target.contains(anchor))
         dismiss();
     };
-    window.addEventListener('keydown', onKeydown, true);
-    window.addEventListener('scroll', onScroll, true);
+    const options = { capture: true, signal };
+    window.addEventListener('keydown', onKeydown, options);
+    window.addEventListener('scroll', onScroll, options);
     onCleanup(() => {
-      positioning = false;
+      listeners.abort();
       updateDescription(anchor, false);
       stop();
-      window.removeEventListener('keydown', onKeydown, true);
-      window.removeEventListener('scroll', onScroll, true);
     });
   },
   { flush: 'post' },
