@@ -1,19 +1,24 @@
 <template>
   <PopoverRoot v-model:open="open">
     <PopoverTrigger as-child>
-      <button
+      <UiButton
+        ref="trigger"
         class="update-trigger"
-        type="button"
+        variant="plain"
+        :label="triggerLabel"
         :aria-label="triggerLabel"
+        :tooltip="false"
       >
-        v{{ appVersion }}
-        <span
-          v-if="indicator === 'accent' || indicator === 'downloading'"
-          class="update-indicator"
-          :class="indicator"
-          aria-hidden="true"
-        ></span>
-      </button>
+        <template #caption>
+          v{{ appVersion }}
+          <span
+            v-if="indicator === 'accent' || indicator === 'downloading'"
+            class="update-indicator"
+            :class="indicator"
+            aria-hidden="true"
+          ></span>
+        </template>
+      </UiButton>
     </PopoverTrigger>
     <PopoverPortal>
       <PopoverContent
@@ -54,23 +59,28 @@
         <footer class="update-actions">
           <UiButton
             v-if="state.phase === 'available'"
+            label="Skip"
             :disabled="isBusy"
+            :tooltip="{ shortcut: 'Mod+Shift+Enter' }"
             @click="dismiss"
-          >
-            Skip
-          </UiButton>
+          />
           <UiButton
             v-if="primaryAction"
+            :label="primaryAction"
             variant="primary"
             :disabled="isBusy"
+            :tooltip="{ shortcut: 'Mod+Enter' }"
             @click="runPrimaryAction"
-          >
-            {{ primaryAction }}
-          </UiButton>
+          />
         </footer>
       </PopoverContent>
     </PopoverPortal>
   </PopoverRoot>
+  <UiTooltip
+    :anchor="trigger?.button"
+    :text="triggerLabel"
+    :disabled="open"
+  />
 </template>
 
 <script setup lang="ts">
@@ -87,7 +97,9 @@ import appVersion from '../lib/app-version';
 import { updateFailureDescription, useUpdate } from '../lib/update';
 
 import UiButton from './ui/UiButton.vue';
+import UiTooltip from './ui/UiTooltip.vue';
 
+const trigger = ref<InstanceType<typeof UiButton>>();
 const update = useUpdate();
 const state = update.state;
 const open = ref(false);

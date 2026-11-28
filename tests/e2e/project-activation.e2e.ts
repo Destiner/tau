@@ -85,13 +85,27 @@ test('both project disclosure controls fold without switching sessions or losing
 
   const name = notes.locator('.project-select');
   const chevron = notes.locator('.project-toggle');
+  const tooltip = page.locator('.ui-tooltip:visible');
+  const chevronBox = await chevron.boundingBox();
+
+  await chevron.hover();
+  await expect(tooltip).toHaveText(['Collapse notes']);
+  expect(await chevron.boundingBox()).toEqual(chevronBox);
+  await composer.hover();
+  await expect(tooltip).toHaveCount(0);
+
   await name.click();
   await expect(name).toHaveAttribute('aria-expanded', 'false');
   await expect(chevron).toHaveAttribute('aria-expanded', 'false');
   await expect(notes.locator('.session-list')).toHaveCount(0);
   await expectPersistedFold(page, 'notes', true);
 
+  await chevron.hover();
+  await expect(tooltip).toHaveText(['Expand notes']);
+  expect(await chevron.boundingBox()).toEqual(chevronBox);
   await chevron.click();
+  await composer.hover();
+  await expect(tooltip).toHaveCount(0);
   await expect(name).toHaveAttribute('aria-expanded', 'true');
   await expect(chevron).toHaveAttribute('aria-expanded', 'true');
   await expect(notes.locator('.session-list')).toBeVisible();
@@ -181,15 +195,19 @@ test('keyboard navigation reveals and operates the project header controls', asy
   await page.keyboard.press('Enter');
   await expect(name).toHaveAttribute('aria-expanded', 'false');
 
+  const tooltip = page.locator('.ui-tooltip:visible');
   await page.keyboard.press('Tab');
   await expect(chevron).toBeFocused();
   await expect(chevron).not.toHaveCSS('opacity', '0');
+  await expect(tooltip).toHaveText(['Expand notes']);
   await page.keyboard.press('ArrowRight');
   await expect(name).toHaveAttribute('aria-expanded', 'true');
 
   await page.keyboard.press('Tab');
   await expect(plus).toBeFocused();
   await expect(plus).not.toHaveCSS('opacity', '0');
+  await expect(tooltip).toHaveCount(1);
+  await expect(tooltip).toContainText('New Session');
   await page.keyboard.press('Space');
   await expect(notes.locator('.session-row')).toHaveCount(3);
   await expect(notes.locator('.session-row.selected')).toBeVisible();

@@ -2,25 +2,36 @@
   <button
     ref="button"
     type="button"
-    class="ui-icon-button"
+    :class="{ 'ui-icon-button': variant !== 'plain' }"
     :data-size="size"
     :data-tone="tone"
     :data-variant="variant"
     :data-reveal="variant === 'reveal' || undefined"
     :aria-label="label"
     :disabled="disabled || undefined"
+    v-bind="$attrs"
   >
     <slot />
+    <UiTooltip
+      v-if="tooltip !== false && !disabled"
+      v-bind="tooltip"
+      :anchor="button"
+      :text="tooltip?.text ?? label"
+    />
   </button>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue';
 
+import UiTooltip from './UiTooltip.vue';
+import type { ActionTooltip } from './action-tooltip';
+
 withDefaults(
   defineProps<{
     label: string;
     disabled?: boolean;
+    tooltip?: ActionTooltip;
 
     size?: 'lg' | 'md' | 'sm' | 'xs';
     /**
@@ -28,15 +39,18 @@ withDefaults(
      * `fill` fills on hover, `reveal` is invisible until hovered (and until
      * its row is hovered, which the row's own stylesheet provides).
      */
-    variant?: 'fade' | 'fill' | 'reveal';
+    variant?: 'fade' | 'fill' | 'reveal' | 'plain';
     tone?: 'default' | 'danger';
   }>(),
   {
     size: 'md',
+    tooltip: undefined,
     variant: 'fade',
     tone: 'default',
   },
 );
+
+defineOptions({ inheritAttrs: false });
 
 const button = ref<HTMLButtonElement>();
 

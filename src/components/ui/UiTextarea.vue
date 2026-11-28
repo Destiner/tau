@@ -1,11 +1,10 @@
 <template>
   <textarea
     ref="textarea"
-    class="ui-textarea"
+    v-model="modelValue"
+    :class="{ 'ui-textarea': variant !== 'unstyled' }"
     :data-variant="variant"
-    :value="modelValue"
     v-bind="$attrs"
-    @input="handleInput"
   ></textarea>
 </template>
 
@@ -16,7 +15,7 @@ const modelValue = defineModel<string>({ default: '' });
 
 withDefaults(
   defineProps<{
-    variant?: 'bordered' | 'bare';
+    variant?: 'bordered' | 'bare' | 'unstyled';
   }>(),
   { variant: 'bordered' },
 );
@@ -24,10 +23,6 @@ withDefaults(
 defineOptions({ inheritAttrs: false });
 
 const textarea = ref<HTMLTextAreaElement>();
-
-function handleInput(event: Event): void {
-  modelValue.value = (event.target as HTMLTextAreaElement).value;
-}
 
 defineExpose({
   get input() {

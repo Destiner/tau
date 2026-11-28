@@ -51,21 +51,20 @@
         >
           <UiButton
             ref="cancelButton"
+            label="Cancel"
             size="md"
             :disabled="busy"
             @click="cancel"
-          >
-            Cancel
-          </UiButton>
+          />
           <UiButton
             ref="confirmButton"
+            :label="busyLabelVisible && busyAction ? busyAction : action"
             size="md"
             variant="primary"
             :disabled="busy"
+            :tooltip="{ shortcut: 'Mod+Enter' }"
             @click="confirm"
-          >
-            {{ busyLabelVisible && busyAction ? busyAction : action }}
-          </UiButton>
+          />
         </footer>
       </DialogContent>
     </DialogPortal>

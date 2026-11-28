@@ -34,13 +34,11 @@
       @keydown.space.prevent
       @keyup.space.prevent
     >
-      <button
+      <UiListOption
         v-for="(option, index) in options"
         :id="`extension-prompt-option-${index}`"
         :key="`${index}:${option}`"
         class="extension-prompt-option ui-pick-row"
-        type="button"
-        role="option"
         :data-cursor="index === selectedIndex || undefined"
         :aria-selected="index === selectedIndex"
         :disabled="submitting || disabled"
@@ -49,7 +47,7 @@
         @click="() => chooseOption(option)"
       >
         {{ option }}
-      </button>
+      </UiListOption>
       <div
         v-if="options?.length === 0"
         class="extension-prompt-empty"
@@ -105,36 +103,32 @@
           variant="primary"
           type="button"
           :disabled="submitting || disabled"
+          label="Confirm"
           @click="confirm"
-        >
-          Confirm
-        </UiButton>
+        />
         <UiButton
           ref="negativeAction"
           variant="secondary"
           type="button"
           :disabled="submitting || disabled"
+          label="No"
           @click="reject"
-        >
-          No
-        </UiButton>
+        />
       </template>
       <UiButton
         v-else-if="method === 'input' || method === 'editor'"
         variant="primary"
         type="submit"
+        label="Submit"
         :disabled="submitting || disabled"
-      >
-        Submit
-      </UiButton>
+      />
       <UiButton
         variant="secondary"
         type="button"
         :disabled="submitting || disabled"
+        label="Cancel"
         @click="cancel"
-      >
-        Cancel
-      </UiButton>
+      />
     </footer>
   </form>
 </template>
@@ -151,6 +145,7 @@ import MarkdownText from './ui/MarkdownText.vue';
 import UiButton from './ui/UiButton.vue';
 import UiContextMenu from './ui/UiContextMenu.vue';
 import UiInput from './ui/UiInput.vue';
+import UiListOption from './ui/UiListOption.vue';
 import UiTextarea from './ui/UiTextarea.vue';
 
 const draft = defineModel<string>('draft', { default: '' });

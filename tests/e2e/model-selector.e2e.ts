@@ -9,7 +9,17 @@ test('groups, filters, and traverses models in rendered order', async ({
 
   const trigger = page.getByRole('combobox', { name: 'Model', exact: true });
   await expect(trigger).toHaveText('GPT-5.6 Sol');
+  await trigger.hover();
+  const tooltip = page.locator('.ui-tooltip:visible');
+  await expect(tooltip).toHaveCount(1);
+  await expect(tooltip).toHaveText('Model');
+  const triggerBox = (await trigger.boundingBox())!;
   await trigger.click();
+  await expect(tooltip).toHaveCount(0);
+  const popup = page.getByRole('dialog', { name: 'Models' });
+  const popupBox = (await popup.boundingBox())!;
+  expect(Math.abs(popupBox.x - triggerBox.x)).toBeLessThan(12);
+  expect(popupBox.y + popupBox.height).toBeLessThanOrEqual(triggerBox.y);
 
   const search = page.getByRole('searchbox', { name: 'Search Models' });
   await expect(search).toBeFocused();

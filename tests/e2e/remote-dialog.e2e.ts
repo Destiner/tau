@@ -148,7 +148,19 @@ test('restores focus to the open-project trigger after dismissal', async ({
   await page.goto('/?test-scenario=saved-session-bootstrap');
 
   const trigger = page.getByRole('button', { name: 'Open Project' });
+  await trigger.hover();
+  const tooltip = page.locator('.ui-tooltip:visible');
+  await expect(tooltip).toHaveCount(1);
+  await expect(tooltip.locator('.ui-tooltip-label')).toHaveText('Open Project');
+  await expect(tooltip.locator('kbd')).toHaveText(/^(⌘|Ctrl\+)O$/);
+  const anchor = (await trigger.boundingBox())!;
   await trigger.click();
+  await expect(tooltip).toHaveCount(0);
+  const menu = page.getByRole('menu');
+  await expect(menu).toBeVisible();
+  const bounds = (await menu.boundingBox())!;
+  expect(bounds.y + bounds.height).toBeLessThanOrEqual(anchor.y);
+  expect(Math.abs(bounds.x - anchor.x)).toBeLessThan(12);
   await page.getByRole('menuitem', { name: 'Open Remote Project' }).click();
 
   const dialog = page.getByRole('dialog', { name: 'SSH Connection' });

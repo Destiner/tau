@@ -1,13 +1,12 @@
 <template>
-  <label
+  <CheckboxRoot
+    ref="checkbox"
+    v-model="model"
     class="ui-checkbox"
-    :data-disabled="disabled || undefined"
+    :aria-label="label"
+    :disabled="disabled"
   >
-    <CheckboxRoot
-      v-model="model"
-      class="ui-checkbox-box"
-      :disabled="disabled || undefined"
-    >
+    <span class="ui-checkbox-box">
       <CheckboxIndicator
         class="ui-checkbox-mark"
         force-mount
@@ -19,17 +18,41 @@
           <path d="M2.6 6.3 4.8 8.6 9.4 3.6" />
         </svg>
       </CheckboxIndicator>
-    </CheckboxRoot>
-    <span><slot /></span>
-  </label>
+    </span>
+    <span>{{ label }}</span>
+    <UiTooltip
+      v-if="tooltip !== false"
+      v-bind="tooltip"
+      :anchor="checkboxElement"
+      :disabled="disabled"
+      :text="tooltip?.text ?? label"
+    />
+  </CheckboxRoot>
 </template>
 
 <script setup lang="ts">
 import { CheckboxIndicator, CheckboxRoot } from 'reka-ui';
+import { computed, ref } from 'vue';
+
+import UiTooltip from './UiTooltip.vue';
+import type { ActionTooltip } from './action-tooltip';
 
 const model = defineModel<boolean>({ default: false });
 
-withDefaults(defineProps<{ disabled?: boolean }>(), { disabled: false });
+withDefaults(
+  defineProps<{
+    label: string;
+    disabled?: boolean;
+    tooltip?: ActionTooltip;
+  }>(),
+  { tooltip: undefined },
+);
+
+const checkbox = ref<{ $el: unknown }>();
+const checkboxElement = computed(() => {
+  const element = checkbox.value?.$el;
+  return element instanceof HTMLButtonElement ? element : undefined;
+});
 </script>
 
 <style scoped>
@@ -38,6 +61,10 @@ withDefaults(defineProps<{ disabled?: boolean }>(), { disabled: false });
 .ui-checkbox {
   display: inline-flex;
   align-items: center;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
   color: var(--muted);
   font-size: var(--text-sm);
   gap: 7px;
@@ -65,17 +92,17 @@ withDefaults(defineProps<{ disabled?: boolean }>(), { disabled: false });
   background: var(--hover);
 }
 
-.ui-checkbox-box[data-state='checked'] {
+.ui-checkbox[data-state='checked'] .ui-checkbox-box {
   border-color: var(--accent);
   background: var(--accent);
 }
 
-.ui-checkbox:hover .ui-checkbox-box[data-state='checked'] {
+.ui-checkbox[data-state='checked']:hover .ui-checkbox-box {
   border-color: color-mix(in srgb, var(--accent) 82%, var(--text));
   background: color-mix(in srgb, var(--accent) 82%, var(--text));
 }
 
-.ui-checkbox-box:focus-visible {
+.ui-checkbox:focus-visible .ui-checkbox-box {
   border-color: var(--accent);
   outline: 0;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
@@ -93,7 +120,7 @@ withDefaults(defineProps<{ disabled?: boolean }>(), { disabled: false });
   color: var(--canvas);
 }
 
-.ui-checkbox-box[data-state='unchecked'] .ui-checkbox-mark {
+.ui-checkbox[data-state='unchecked'] .ui-checkbox-mark {
   opacity: 0;
 }
 

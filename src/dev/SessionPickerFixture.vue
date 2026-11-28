@@ -1,11 +1,10 @@
 <template>
   <main class="session-picker-fixture">
-    <button
-      type="button"
+    <UiButton
+      variant="plain"
+      label="Open Switch Session"
       @click="openPicker"
-    >
-      Open Switch Session
-    </button>
+    />
     <output data-testid="selected-session">{{ selectedDestination }}</output>
     <CommandPalette
       v-model:open="open"
@@ -27,6 +26,7 @@ import { computed, onBeforeUnmount, ref } from 'vue';
 import CommandPalette, {
   type CommandPaletteRow,
 } from '../components/CommandPalette.vue';
+import UiButton from '../components/ui/UiButton.vue';
 import type { ProjectSummary, SessionSummary } from '../composables/state';
 import {
   preferredSessionPickerId,

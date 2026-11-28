@@ -91,13 +91,11 @@
         class="remote-directory-list"
         role="listbox"
       >
-        <button
+        <UiListOption
           v-for="(option, index) in directoryOptions"
           :id="`remote-directory-option-${index}`"
           :key="option.path"
           class="remote-directory-option ui-pick-row"
-          type="button"
-          role="option"
           tabindex="-1"
           :data-cursor="index === selectedIndex || undefined"
           :aria-selected="index === selectedIndex"
@@ -108,7 +106,7 @@
           @click="() => chooseDirectory(option)"
         >
           {{ option.name }}
-        </button>
+        </UiListOption>
       </div>
     </div>
   </UiDialog>
@@ -122,6 +120,7 @@ import textFieldItems from '../lib/text-menu';
 import UiContextMenu from './ui/UiContextMenu.vue';
 import UiDialog from './ui/UiDialog.vue';
 import UiInput from './ui/UiInput.vue';
+import UiListOption from './ui/UiListOption.vue';
 
 interface RemoteDirectoryOption {
   name: string;

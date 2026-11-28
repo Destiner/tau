@@ -4,15 +4,15 @@
       <ModelSelector
         v-model="selectedModel"
         :models="models"
-        aria-label="Model"
+        label="Model"
       />
-      <button type="button">Outside</button>
+      <UiButton label="Outside" />
     </section>
     <section>
       <ModelSelector
         v-model="emptyModel"
         :models="[]"
-        aria-label="Empty Model"
+        label="Empty Model"
       />
     </section>
   </main>
@@ -22,6 +22,7 @@
 import { ref } from 'vue';
 
 import ModelSelector from '../components/ModelSelector.vue';
+import UiButton from '../components/ui/UiButton.vue';
 import type { ModelOption } from '../lib/pi/model-scope';
 
 const selectedModel = ref('openai-codex/gpt-5.6-sol');

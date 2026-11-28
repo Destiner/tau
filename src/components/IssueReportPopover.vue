@@ -1,342 +1,354 @@
 <template>
-  <UiTooltip text="Report an Issue">
-    <span class="issue-report-trigger">
-      <PopoverRoot
-        :open="open"
-        @update:open="setOpen"
-      >
-        <PopoverTrigger as-child>
-          <UiIconButton
-            size="lg"
-            label="Report an Issue"
-            ><UiIcon name="bug"
-          /></UiIconButton>
-        </PopoverTrigger>
-        <PopoverPortal>
-          <PopoverContent
-            class="issue-report-popover ui-surface"
-            side="top"
-            align="end"
-            :side-offset="5"
-            :collision-padding="8"
-            aria-label="Report an Issue"
-            :aria-busy="!!busy"
-            @interact-outside="handleOutside"
-            @escape-key-down="handleEscape"
-            @keydown="handleKeydown"
+  <span class="issue-report-trigger">
+    <PopoverRoot
+      :open="open"
+      @update:open="setOpen"
+    >
+      <PopoverTrigger as-child>
+        <UiIconButton
+          ref="trigger"
+          size="lg"
+          :label="reportIssueLabel"
+          :tooltip="false"
+        >
+          <UiIcon name="bug" />
+        </UiIconButton>
+      </PopoverTrigger>
+      <PopoverPortal>
+        <PopoverContent
+          class="issue-report-popover ui-surface"
+          side="top"
+          align="end"
+          :side-offset="5"
+          :collision-padding="8"
+          aria-label="Report an Issue"
+          :aria-busy="!!busy"
+          @interact-outside="handleOutside"
+          @escape-key-down="handleEscape"
+          @keydown="handleKeydown"
+        >
+          <form
+            class="issue-report-form"
+            @submit.prevent="submit"
           >
-            <form
-              class="issue-report-form"
-              @submit.prevent="submit"
-            >
-              <template v-if="view === 'loading'">
-                <div class="issue-report-loading">
+            <template v-if="view === 'loading'">
+              <div class="issue-report-loading">
+                <UiSpinner
+                  v-if="showSpinner"
+                  label="Loading connections"
+                />
+              </div>
+            </template>
+            <template v-else-if="view === 'load-error'">
+              <p
+                class="issue-report-error"
+                role="alert"
+              >
+                {{ errors.load }}
+              </p>
+              <footer>
+                <UiButton
+                  label="Retry"
+                  @click="load"
+                />
+              </footer>
+            </template>
+            <template v-else-if="view === 'report'">
+              <h2>Report an Issue</h2>
+              <label class="issue-report-field issue-report-description">
+                <span>Describe the Issue</span>
+                <UiContextMenu
+                  :items="() => textFieldItems(() => descriptionInput?.input)"
+                >
+                  <UiTextarea
+                    ref="descriptionInput"
+                    v-model="description"
+                    rows="6"
+                    maxlength="10000"
+                    :readonly="!!busy"
+                    aria-label="Describe the Issue"
+                  />
+                </UiContextMenu>
+              </label>
+              <UiCheckbox
+                v-model="includeSession"
+                label="Include Current Session"
+                :disabled="!sessionId || !!busy"
+                :tooltip="{ shortcut: 'Mod+Shift+S' }"
+              />
+              <p
+                v-if="errors.send"
+                class="issue-report-error"
+                role="alert"
+              >
+                {{ errors.send }}
+              </p>
+              <footer>
+                <UiButton
+                  label="Connections"
+                  variant="ghost"
+                  :disabled="!!busy"
+                  @click="showConnections"
+                />
+                <UiButton
+                  label="Submit"
+                  variant="primary"
+                  type="submit"
+                  :disabled="!canSubmit"
+                  :tooltip="{ shortcut: 'Mod+Enter' }"
+                >
                   <UiSpinner
                     v-if="showSpinner"
-                    label="Loading connections"
+                    label="Sending report"
                   />
-                </div>
-              </template>
-              <template v-else-if="view === 'load-error'">
-                <p
-                  class="issue-report-error"
-                  role="alert"
+                </UiButton>
+              </footer>
+            </template>
+            <template v-else>
+              <header class="issue-report-provider">
+                <h2>
+                  {{
+                    view === 'connections'
+                      ? 'Connections'
+                      : view === 'grafana'
+                        ? 'Grafana'
+                        : 'Linear'
+                  }}
+                </h2>
+                <UiIconButton
+                  v-if="view === 'grafana' && connections.grafana"
+                  size="xs"
+                  label="Disconnect Grafana"
+                  :disabled="!!busy"
+                  @click="disconnectGrafana"
+                  ><UiIcon name="cross"
+                /></UiIconButton>
+              </header>
+              <p
+                v-if="reconnecting"
+                class="issue-report-note"
+              >
+                Reconnect Linear to send reports.
+              </p>
+              <section v-if="view !== 'grafana'">
+                <header
+                  v-if="view === 'connections'"
+                  class="issue-report-provider"
                 >
-                  {{ errors.load }}
-                </p>
-                <footer><UiButton @click="load">Retry</UiButton></footer>
-              </template>
-              <template v-else-if="view === 'report'">
-                <h2>Report an Issue</h2>
-                <label class="issue-report-field issue-report-description">
-                  <span>Describe the Issue</span>
-                  <UiContextMenu
-                    :items="() => textFieldItems(() => descriptionInput?.input)"
-                  >
-                    <UiTextarea
-                      ref="descriptionInput"
-                      v-model="description"
-                      rows="6"
-                      maxlength="10000"
-                      :readonly="!!busy"
-                      aria-label="Describe the Issue"
-                    />
-                  </UiContextMenu>
-                </label>
-                <UiCheckbox
-                  v-model="includeSession"
-                  :disabled="!sessionId || !!busy"
-                  >Include Current Session</UiCheckbox
-                >
-                <p
-                  v-if="errors.send"
-                  class="issue-report-error"
-                  role="alert"
-                >
-                  {{ errors.send }}
-                </p>
-                <footer>
-                  <UiButton
-                    variant="ghost"
-                    :disabled="!!busy"
-                    @click="showConnections"
-                    >Connections</UiButton
-                  >
-                  <UiButton
-                    variant="primary"
-                    type="submit"
-                    :disabled="!canSubmit"
-                    ><UiSpinner
-                      v-if="showSpinner"
-                      label="Sending report"
-                    />Submit</UiButton
-                  >
-                </footer>
-              </template>
-              <template v-else>
-                <header class="issue-report-provider">
-                  <h2>
-                    {{
-                      view === 'connections'
-                        ? 'Connections'
-                        : view === 'grafana'
-                          ? 'Grafana'
-                          : 'Linear'
-                    }}
-                  </h2>
+                  <h3>Linear</h3>
                   <UiIconButton
-                    v-if="view === 'grafana' && connections.grafana"
+                    v-if="connections.linear"
+                    size="xs"
+                    label="Disconnect Linear"
+                    :disabled="!!busy"
+                    @click="disconnectLinear"
+                    ><UiIcon name="cross"
+                  /></UiIconButton>
+                </header>
+                <p
+                  v-if="connections.linear"
+                  class="issue-report-summary"
+                >
+                  {{ connections.linear.teamName
+                  }}<template v-if="connections.linear.projectName">
+                    / {{ connections.linear.projectName }}</template
+                  >
+                </p>
+                <template v-else-if="!validated">
+                  <label class="issue-report-field"
+                    ><span>API Key</span
+                    ><UiTokenInput
+                      v-model="linearKey"
+                      aria-label="API Key"
+                      placeholder="Linear API key"
+                      :readonly="!!busy"
+                  /></label>
+                  <p
+                    v-if="errors.linear"
+                    class="issue-report-error"
+                    role="alert"
+                  >
+                    {{ errors.linear }}
+                  </p>
+                  <div class="issue-report-row">
+                    <UiButton
+                      :variant="
+                        view === 'connections' ? 'secondary' : 'primary'
+                      "
+                      label="Connect"
+                      :disabled="!canValidate"
+                      @click="validateLinear"
+                    >
+                      <UiSpinner v-if="showSpinner && busy === 'linear'" />
+                    </UiButton>
+                  </div>
+                </template>
+                <template v-else>
+                  <div class="issue-report-destination">
+                    <label class="issue-report-field"
+                      ><span>Team</span
+                      ><UiSelect
+                        v-model="teamId"
+                        :options="teamOptions"
+                        label="Team"
+                        :disabled="!!busy"
+                    /></label>
+                    <label class="issue-report-field"
+                      ><span>Project</span
+                      ><UiSelect
+                        v-model="projectId"
+                        :options="projectOptions"
+                        label="Project"
+                        :disabled="!!busy"
+                    /></label>
+                  </div>
+                  <p
+                    v-if="errors.destination"
+                    class="issue-report-error"
+                    role="alert"
+                  >
+                    {{ errors.destination }}
+                  </p>
+                  <div class="issue-report-row">
+                    <UiButton
+                      :variant="
+                        view === 'connections' ? 'secondary' : 'primary'
+                      "
+                      label="Save Destination"
+                      :disabled="!canSaveDestination"
+                      @click="saveLinear"
+                    >
+                      <UiSpinner v-if="showSpinner && busy === 'destination'" />
+                    </UiButton>
+                    <UiButton
+                      v-if="view !== 'connections'"
+                      label="Back"
+                      variant="ghost"
+                      :disabled="!!busy"
+                      @click="backToKey"
+                    />
+                  </div>
+                </template>
+                <p
+                  v-if="errors['disconnect-linear']"
+                  class="issue-report-error"
+                  role="alert"
+                >
+                  {{ errors['disconnect-linear'] }}
+                </p>
+              </section>
+              <section v-if="view === 'grafana' || view === 'connections'">
+                <header
+                  v-if="view === 'connections'"
+                  class="issue-report-provider"
+                >
+                  <h3>
+                    Grafana
+                    <span class="issue-report-optional">Optional</span>
+                  </h3>
+                  <UiIconButton
+                    v-if="connections.grafana"
                     size="xs"
                     label="Disconnect Grafana"
-                    title="Disconnect Grafana"
                     :disabled="!!busy"
                     @click="disconnectGrafana"
                     ><UiIcon name="cross"
                   /></UiIconButton>
                 </header>
-                <p
-                  v-if="reconnecting"
+                <span
+                  v-else
                   class="issue-report-note"
+                  >Optional</span
                 >
-                  Reconnect Linear to send reports.
+                <p
+                  v-if="connections.grafana"
+                  class="issue-report-summary"
+                >
+                  {{ connections.grafana.endpoint }}
                 </p>
-                <section v-if="view !== 'grafana'">
-                  <header
-                    v-if="view === 'connections'"
-                    class="issue-report-provider"
-                  >
-                    <h3>Linear</h3>
-                    <UiIconButton
-                      v-if="connections.linear"
-                      size="xs"
-                      label="Disconnect Linear"
-                      title="Disconnect Linear"
-                      :disabled="!!busy"
-                      @click="disconnectLinear"
-                      ><UiIcon name="cross"
-                    /></UiIconButton>
-                  </header>
+                <template v-else>
+                  <label class="issue-report-field"
+                    ><span>OTLP Endpoint</span
+                    ><UiInput
+                      v-model="endpoint"
+                      placeholder="https://…/otlp"
+                      :readonly="!!busy"
+                      spellcheck="false"
+                      autocomplete="off"
+                  /></label>
+                  <label class="issue-report-field"
+                    ><span>Instance ID</span
+                    ><UiInput
+                      v-model="instanceId"
+                      :readonly="!!busy"
+                      spellcheck="false"
+                      autocomplete="off"
+                  /></label>
+                  <label class="issue-report-field"
+                    ><span>Token</span
+                    ><UiTokenInput
+                      v-model="token"
+                      aria-label="Token"
+                      :readonly="!!busy"
+                  /></label>
                   <p
-                    v-if="connections.linear"
-                    class="issue-report-summary"
-                  >
-                    {{ connections.linear.teamName
-                    }}<template v-if="connections.linear.projectName">
-                      / {{ connections.linear.projectName }}</template
-                    >
-                  </p>
-                  <template v-else-if="!validated">
-                    <label class="issue-report-field"
-                      ><span>API Key</span
-                      ><UiTokenInput
-                        v-model="linearKey"
-                        aria-label="API Key"
-                        placeholder="Linear API key"
-                        :readonly="!!busy"
-                    /></label>
-                    <p
-                      v-if="errors.linear"
-                      class="issue-report-error"
-                      role="alert"
-                    >
-                      {{ errors.linear }}
-                    </p>
-                    <div class="issue-report-row">
-                      <UiButton
-                        :variant="
-                          view === 'connections' ? 'secondary' : 'primary'
-                        "
-                        :disabled="!canValidate"
-                        @click="validateLinear"
-                        ><UiSpinner
-                          v-if="showSpinner && busy === 'linear'"
-                        />Connect</UiButton
-                      >
-                    </div>
-                  </template>
-                  <template v-else>
-                    <div class="issue-report-destination">
-                      <label class="issue-report-field"
-                        ><span>Team</span
-                        ><UiSelect
-                          v-model="teamId"
-                          :options="teamOptions"
-                          aria-label="Team"
-                          :disabled="!!busy"
-                      /></label>
-                      <label class="issue-report-field"
-                        ><span>Project</span
-                        ><UiSelect
-                          v-model="projectId"
-                          :options="projectOptions"
-                          aria-label="Project"
-                          :disabled="!!busy"
-                      /></label>
-                    </div>
-                    <p
-                      v-if="errors.destination"
-                      class="issue-report-error"
-                      role="alert"
-                    >
-                      {{ errors.destination }}
-                    </p>
-                    <div class="issue-report-row">
-                      <UiButton
-                        :variant="
-                          view === 'connections' ? 'secondary' : 'primary'
-                        "
-                        :disabled="!canSaveDestination"
-                        @click="saveLinear"
-                        ><UiSpinner
-                          v-if="showSpinner && busy === 'destination'"
-                        />Save Destination</UiButton
-                      >
-                      <UiButton
-                        v-if="view !== 'connections'"
-                        variant="ghost"
-                        :disabled="!!busy"
-                        @click="backToKey"
-                        >Back</UiButton
-                      >
-                    </div>
-                  </template>
-                  <p
-                    v-if="errors['disconnect-linear']"
+                    v-if="errors.grafana"
                     class="issue-report-error"
                     role="alert"
                   >
-                    {{ errors['disconnect-linear'] }}
+                    {{ errors.grafana }}
                   </p>
-                </section>
-                <section v-if="view === 'grafana' || view === 'connections'">
-                  <header
-                    v-if="view === 'connections'"
-                    class="issue-report-provider"
-                  >
-                    <h3>
-                      Grafana
-                      <span class="issue-report-optional">Optional</span>
-                    </h3>
-                    <UiIconButton
-                      v-if="connections.grafana"
-                      size="xs"
-                      label="Disconnect Grafana"
-                      title="Disconnect Grafana"
-                      :disabled="!!busy"
-                      @click="disconnectGrafana"
-                      ><UiIcon name="cross"
-                    /></UiIconButton>
-                  </header>
-                  <span
-                    v-else
-                    class="issue-report-note"
-                    >Optional</span
-                  >
-                  <p
-                    v-if="connections.grafana"
-                    class="issue-report-summary"
-                  >
-                    {{ connections.grafana.endpoint }}
-                  </p>
-                  <template v-else>
-                    <label class="issue-report-field"
-                      ><span>OTLP Endpoint</span
-                      ><UiInput
-                        v-model="endpoint"
-                        placeholder="https://…/otlp"
-                        :readonly="!!busy"
-                        spellcheck="false"
-                        autocomplete="off"
-                    /></label>
-                    <label class="issue-report-field"
-                      ><span>Instance ID</span
-                      ><UiInput
-                        v-model="instanceId"
-                        :readonly="!!busy"
-                        spellcheck="false"
-                        autocomplete="off"
-                    /></label>
-                    <label class="issue-report-field"
-                      ><span>Token</span
-                      ><UiTokenInput
-                        v-model="token"
-                        aria-label="Token"
-                        :readonly="!!busy"
-                    /></label>
-                    <p
-                      v-if="errors.grafana"
-                      class="issue-report-error"
-                      role="alert"
+                  <div class="issue-report-row">
+                    <UiButton
+                      :variant="
+                        view === 'connections' ? 'secondary' : 'primary'
+                      "
+                      label="Connect"
+                      :disabled="!canSaveGrafana"
+                      @click="saveGrafana"
                     >
-                      {{ errors.grafana }}
-                    </p>
-                    <div class="issue-report-row">
-                      <UiButton
-                        :variant="
-                          view === 'connections' ? 'secondary' : 'primary'
-                        "
-                        :disabled="!canSaveGrafana"
-                        @click="saveGrafana"
-                        ><UiSpinner
-                          v-if="showSpinner && busy === 'grafana'"
-                        />Connect</UiButton
-                      >
-                    </div>
-                  </template>
-                  <p
-                    v-if="errors['disconnect-grafana']"
-                    class="issue-report-error"
-                    role="alert"
-                  >
-                    {{ errors['disconnect-grafana'] }}
-                  </p>
-                </section>
-                <footer v-if="view === 'grafana' || view === 'connections'">
-                  <span />
-                  <UiButton
-                    :variant="
-                      view === 'grafana' && !connections.grafana
-                        ? 'ghost'
-                        : 'primary'
-                    "
-                    :disabled="!!busy || !connections.linear"
-                    @click="showReport"
-                    >{{
-                      view === 'connections'
-                        ? 'Done'
-                        : connections.grafana
-                          ? 'Continue'
-                          : 'Skip'
-                    }}</UiButton
-                  >
-                </footer>
-              </template>
-            </form>
-          </PopoverContent>
-        </PopoverPortal>
-      </PopoverRoot>
-    </span>
-  </UiTooltip>
+                      <UiSpinner v-if="showSpinner && busy === 'grafana'" />
+                    </UiButton>
+                  </div>
+                </template>
+                <p
+                  v-if="errors['disconnect-grafana']"
+                  class="issue-report-error"
+                  role="alert"
+                >
+                  {{ errors['disconnect-grafana'] }}
+                </p>
+              </section>
+              <footer v-if="view === 'grafana' || view === 'connections'">
+                <span />
+                <UiButton
+                  :label="
+                    view === 'connections'
+                      ? 'Done'
+                      : connections.grafana
+                        ? 'Continue'
+                        : 'Skip'
+                  "
+                  :variant="
+                    view === 'grafana' && !connections.grafana
+                      ? 'ghost'
+                      : 'primary'
+                  "
+                  :disabled="!!busy || !connections.linear"
+                  @click="showReport"
+                />
+              </footer>
+            </template>
+          </form>
+        </PopoverContent>
+      </PopoverPortal>
+    </PopoverRoot>
+    <UiTooltip
+      :anchor="trigger?.button"
+      :text="reportIssueLabel"
+      :disabled="open"
+    />
+  </span>
 </template>
 
 <script setup lang="ts">
@@ -405,6 +417,8 @@ const {
   saveGrafana,
   submit,
 } = reporter;
+const reportIssueLabel = 'Report an Issue';
+const trigger = ref<InstanceType<typeof UiIconButton>>();
 const descriptionInput = ref<InstanceType<typeof UiTextarea>>();
 let lastOwnedFocus: HTMLElement | undefined;
 

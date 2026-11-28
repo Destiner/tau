@@ -16,11 +16,10 @@
       />
       <UiButton
         size="sm"
+        :label="setupFailure.recovering ? 'Retrying…' : 'Retry Setup'"
         :disabled="!canRetrySetup || !canDraft || Boolean(reloadStatus)"
         @click="retrySetup"
-      >
-        {{ setupFailure.recovering ? 'Retrying…' : 'Retry Setup' }}
-      </UiButton>
+      />
     </div>
     <CommandMenu
       v-if="commandMenuActive"
@@ -34,9 +33,10 @@
       @select="selectCommand"
     />
     <UiContextMenu :items="() => textFieldItems(() => composerInput)">
-      <textarea
-        ref="composerInput"
+      <UiTextarea
+        ref="composerField"
         v-model="draft"
+        variant="unstyled"
         rows="4"
         maxlength="32768"
         placeholder="Message π"
@@ -51,7 +51,7 @@
         aria-autocomplete="list"
         aria-label="Message Pi"
         @keydown="handleComposerKeydown"
-      ></textarea>
+      />
     </UiContextMenu>
     <div class="composer-toolbar">
       <ModelSelector
@@ -60,7 +60,8 @@
         :models="models"
         :fallback-label="currentModelLabel"
         :disabled="settingsDisabled"
-        aria-label="Model"
+        label="Model"
+        :tooltip="{ shortcut: commandHint?.('model.choose')?.shortcut }"
         @select="handleModelChange"
       />
       <UiSelect
@@ -69,7 +70,8 @@
         :options="effortOptions"
         :fallback-label="currentEffortLabel"
         :disabled="settingsDisabled || efforts.length === 0"
-        aria-label="Thinking Effort"
+        label="Thinking Effort"
+        :tooltip="{ shortcut: commandHint?.('effort.choose')?.shortcut }"
         :max-width="110"
         @update:model-value="handleEffortChange"
       />
@@ -106,56 +108,44 @@
         >
       </UiTooltip>
       <template v-if="streaming">
-        <UiTooltip
-          v-if="draft.trim()"
-          :text="commandHint?.('composer.send')?.title ?? 'Queue Message'"
-          :shortcut="commandHint?.('composer.send')?.shortcut"
-        >
-          <UiIconButton
-            class="send-button"
-            size="sm"
-            variant="fill"
-            :disabled="!canQueue || extensionCommandDraft"
-            label="Queue Message"
-            @click="sendSteer"
-          >
-            <UiIcon name="queue" />
-          </UiIconButton>
-        </UiTooltip>
-        <UiTooltip
-          v-else
-          :text="commandHint?.('composer.stop')?.title ?? 'Stop Pi'"
-          :shortcut="commandHint?.('composer.stop')?.shortcut"
-        >
-          <UiIconButton
-            class="send-button stop"
-            size="sm"
-            variant="fill"
-            tone="danger"
-            :disabled="compacting || stopping || !canDraft"
-            label="Stop Pi"
-            @click="stopViaCommand"
-          >
-            <UiIcon name="stop" />
-          </UiIconButton>
-        </UiTooltip>
-      </template>
-      <UiTooltip
-        v-else
-        :text="commandHint?.('composer.send')?.title ?? 'Send Message'"
-        :shortcut="commandHint?.('composer.send')?.shortcut"
-      >
         <UiIconButton
+          v-if="draft.trim()"
           class="send-button"
           size="sm"
           variant="fill"
-          :disabled="!canCompose || !draft.trim()"
-          label="Send Message"
+          :disabled="!canQueue || extensionCommandDraft"
+          label="Queue Message"
+          :tooltip="sendTooltip"
           @click="sendSteer"
         >
-          <UiIcon name="triangle" />
+          <UiIcon name="queue" />
         </UiIconButton>
-      </UiTooltip>
+        <UiIconButton
+          v-else
+          class="send-button stop"
+          size="sm"
+          variant="fill"
+          tone="danger"
+          :disabled="compacting || stopping || !canDraft"
+          label="Stop Pi"
+          :tooltip="stopTooltip"
+          @click="stopViaCommand"
+        >
+          <UiIcon name="stop" />
+        </UiIconButton>
+      </template>
+      <UiIconButton
+        v-else
+        class="send-button"
+        size="sm"
+        variant="fill"
+        :disabled="!canCompose || !draft.trim()"
+        label="Send Message"
+        :tooltip="sendTooltip"
+        @click="sendSteer"
+      >
+        <UiIcon name="triangle" />
+      </UiIconButton>
     </div>
   </div>
 </template>
@@ -198,6 +188,7 @@ import UiContextMenu from './ui/UiContextMenu.vue';
 import UiIcon from './ui/UiIcon.vue';
 import UiIconButton from './ui/UiIconButton.vue';
 import UiSelect from './ui/UiSelect.vue';
+import UiTextarea from './ui/UiTextarea.vue';
 import UiTooltip from './ui/UiTooltip.vue';
 
 const props = defineProps<{
@@ -208,6 +199,14 @@ const props = defineProps<{
 const emit = defineEmits<{ send: [intent: 'steer' | 'followUp'] }>();
 const appCommandDispatch = inject(appCommandDispatchKey, undefined);
 const commandHint = inject(appCommandLookupKey, undefined);
+const sendTooltip = computed(() => {
+  const command = commandHint?.('composer.send');
+  return { text: command?.title, shortcut: command?.shortcut };
+});
+const stopTooltip = computed(() => {
+  const command = commandHint?.('composer.stop');
+  return { text: command?.title, shortcut: command?.shortcut };
+});
 
 const {
   activeController,
@@ -240,7 +239,8 @@ const {
 } = useTau();
 
 const composer = ref<HTMLElement>();
-const composerInput = ref<HTMLTextAreaElement>();
+const composerField = ref<InstanceType<typeof UiTextarea>>();
+const composerInput = computed(() => composerField.value?.input);
 const retryIndicator = ref<HTMLElement>();
 const commandMenu = ref<InstanceType<typeof CommandMenu>>();
 const commandMenuDismissed = ref(false);

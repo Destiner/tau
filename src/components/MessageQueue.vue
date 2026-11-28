@@ -4,52 +4,52 @@
     aria-label="Pending messages"
     @keydown.escape="handleEscape"
   >
-    <UiTooltip
+    <UiIconButton
       v-if="count"
-      text="Clear All"
+      size="sm"
+      variant="fill"
+      label="Clear All"
+      :disabled="busy"
+      @click="clear"
     >
-      <UiIconButton
-        size="sm"
-        variant="fill"
-        label="Clear All"
-        :disabled="busy"
-        @click="clear"
-        ><UiIcon
-          name="cross"
-          style="width: 0.8em; height: 0.8em"
-      /></UiIconButton>
-    </UiTooltip>
+      <UiIcon
+        name="cross"
+        style="width: 0.8em; height: 0.8em"
+      />
+    </UiIconButton>
     <div
       class="queue-rail"
       aria-label="Pending messages; scroll horizontally for more"
     >
-      <button
+      <UiPreviewButton
         v-for="(text, index) in queue.steering"
         :key="`s-${index}`"
         class="queue-chip"
-        type="button"
         :aria-label="`Steering: ${text}`"
-        @mouseenter="(event) => scheduleMessageShow(event, 'steering', text)"
+        @mouseenter="
+          (event: MouseEvent) => scheduleMessageShow(event, 'steering', text)
+        "
         @mouseleave="hideMessage"
-        @focus="(event) => showMessage(event, 'steering', text)"
+        @focus="(event: FocusEvent) => showMessage(event, 'steering', text)"
         @blur="scheduleMessageClose"
       >
         <span class="queue-snippet">{{ text }}</span>
-      </button>
+      </UiPreviewButton>
       <span
         v-if="queue.steering.length && queue.followUp.length"
         class="queue-divider"
         aria-hidden="true"
       ></span>
-      <button
+      <UiPreviewButton
         v-for="(text, index) in queue.followUp"
         :key="`f-${index}`"
         class="queue-chip"
-        type="button"
         :aria-label="`Follow Up ${index + 1}: ${text}`"
-        @mouseenter="(event) => scheduleMessageShow(event, 'followUp', text)"
+        @mouseenter="
+          (event: MouseEvent) => scheduleMessageShow(event, 'followUp', text)
+        "
         @mouseleave="hideMessage"
-        @focus="(event) => showMessage(event, 'followUp', text)"
+        @focus="(event: FocusEvent) => showMessage(event, 'followUp', text)"
         @blur="scheduleMessageClose"
       >
         <span
@@ -57,7 +57,7 @@
           aria-hidden="true"
           >{{ index + 1 }}</span
         ><span class="queue-snippet">{{ text }}</span>
-      </button>
+      </UiPreviewButton>
     </div>
     <span
       v-if="feedback || busy"
@@ -69,20 +69,19 @@
       v-if="feedback && !busy"
       size="sm"
       variant="fade"
-      label="Dismiss queue status"
+      label="Dismiss Queue Status"
       @click="dismiss"
       @keydown.escape="handleStatusEscape"
       ><UiIcon name="cross"
     /></UiIconButton>
-    <button
+    <UiButton
       v-if="failedDrafts.length"
       ref="recoverButton"
-      type="button"
       class="recover"
+      variant="plain"
+      :label="`Review Unsent (${failedDrafts.length})`"
       @click="showFailed"
-    >
-      Review Unsent ({{ failedDrafts.length }})
-    </button>
+    />
     <Teleport to="body">
       <div
         v-if="messagePreview"
@@ -120,13 +119,13 @@
         ><UiButton
           size="sm"
           variant="ghost"
+          label="Restore Draft"
           :disabled="!canRecover"
           @click="() => emit('recover', index)"
           @keydown="
             (event: KeyboardEvent) => handleRestoreKeydown(event, index)
           "
-          >Restore Draft</UiButton
-        >
+        />
       </div>
       <p
         v-if="!canRecover"
@@ -137,9 +136,9 @@
       <UiButton
         size="sm"
         variant="ghost"
+        label="Close"
         @click="closeDetails"
-        >Close</UiButton
-      >
+      />
     </div>
   </section>
 </template>
@@ -153,7 +152,7 @@ import MarkdownText from './ui/MarkdownText.vue';
 import UiButton from './ui/UiButton.vue';
 import UiIcon from './ui/UiIcon.vue';
 import UiIconButton from './ui/UiIconButton.vue';
-import UiTooltip from './ui/UiTooltip.vue';
+import UiPreviewButton from './ui/UiPreviewButton.vue';
 
 const props = defineProps<{
   queue: QueueSnapshot;
@@ -169,7 +168,7 @@ const emit = defineEmits<{
 }>();
 const details = ref<'failed' | null>(null);
 const reviewRegion = ref<HTMLElement>();
-const recoverButton = ref<HTMLButtonElement>();
+const recoverButton = ref<InstanceType<typeof UiButton>>();
 
 function openReview(): void {
   if (!props.failedDrafts.length) return;
@@ -319,7 +318,7 @@ function rememberDetailsTrigger(): void {
     focused !== document.body &&
     !focused.closest('.command-palette')
       ? focused
-      : recoverButton.value;
+      : recoverButton.value?.button;
 }
 function handleEscape(event: KeyboardEvent): void {
   if (messagePreview.value) {
@@ -348,7 +347,7 @@ function closeDetails(): void {
   void nextTick(() => {
     const target = detailsTrigger?.isConnected
       ? detailsTrigger
-      : recoverButton.value;
+      : recoverButton.value?.button;
     target?.focus({ preventScroll: true });
   });
 }

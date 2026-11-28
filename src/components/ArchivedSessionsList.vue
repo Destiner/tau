@@ -8,19 +8,25 @@
       v-for="group in windowed.groups"
       :key="group.label"
     >
-      <button
+      <UiButton
         class="group-head"
-        type="button"
+        variant="plain"
+        :label="group.label"
+        :tooltip="{
+          text: `${closedGroups.has(group.label) ? 'Expand' : 'Collapse'} ${group.label}`,
+        }"
         :aria-expanded="!closedGroups.has(group.label)"
         @click="() => toggleGroup(group.label)"
       >
-        <span>{{ group.label }}</span>
-        <UiIcon
-          :name="
-            closedGroups.has(group.label) ? 'chevron-right' : 'chevron-down'
-          "
-        />
-      </button>
+        <template #caption>
+          <span>{{ group.label }}</span>
+          <UiIcon
+            :name="
+              closedGroups.has(group.label) ? 'chevron-right' : 'chevron-down'
+            "
+          />
+        </template>
+      </UiButton>
       <template v-if="!closedGroups.has(group.label)">
         <div
           v-for="entry in group.items"
@@ -53,9 +59,8 @@
                 >{{ expandedRelativeTime(relativeTime(entry)) }}</span
               >
             </template>
-            <button
+            <UiPreviewButton
               class="copy"
-              type="button"
               :aria-label="`Open ${entry.session.title}`"
               :disabled="projectActionsDisabled"
               @click="() => open(entry)"
@@ -68,34 +73,20 @@
                   <span class="model">{{ entry.session.model }}</span>
                 </template>
               </span>
-            </button>
+            </UiPreviewButton>
           </UiTooltip>
           <span class="time">{{ relativeTime(entry) }}</span>
-          <UiTooltip
-            :text="
-              commandHint?.('session.unarchive', {
-                projectPath: entry.projectPath,
-                sessionId: entry.session.id,
-              })?.title ?? 'Unarchive Session'
-            "
-            :shortcut="
-              commandHint?.('session.unarchive', {
-                projectPath: entry.projectPath,
-                sessionId: entry.session.id,
-              })?.shortcut
-            "
+          <UiIconButton
+            class="unarchive"
+            size="md"
+            variant="reveal"
+            :label="`Unarchive ${entry.session.title}`"
+            :tooltip="unarchiveTooltip(entry)"
+            :disabled="projectActionsDisabled"
+            @click="() => unarchive(entry)"
           >
-            <UiIconButton
-              class="unarchive"
-              size="md"
-              variant="reveal"
-              :label="`Unarchive ${entry.session.title}`"
-              :disabled="projectActionsDisabled"
-              @click="() => unarchive(entry)"
-            >
-              <UiIcon name="archive" />
-            </UiIconButton>
-          </UiTooltip>
+            <UiIcon name="archive" />
+          </UiIconButton>
         </div>
       </template>
     </template>
@@ -137,9 +128,12 @@ import {
 import archivedWindow from '../lib/archived-window';
 
 import MarkdownText from './ui/MarkdownText.vue';
+import UiButton from './ui/UiButton.vue';
 import UiIcon from './ui/UiIcon.vue';
 import UiIconButton from './ui/UiIconButton.vue';
+import UiPreviewButton from './ui/UiPreviewButton.vue';
 import UiTooltip from './ui/UiTooltip.vue';
+import type { ActionTooltip } from './ui/action-tooltip';
 
 const props = defineProps<{ now: number }>();
 
@@ -214,6 +208,14 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   cancelAnimationFrame(frame);
 });
+
+function unarchiveTooltip(entry: ArchivedSessionEntry): ActionTooltip {
+  const hint = commandHint?.('session.unarchive', {
+    projectPath: entry.projectPath,
+    sessionId: entry.session.id,
+  });
+  return { text: hint?.title ?? 'Unarchive Session', shortcut: hint?.shortcut };
+}
 
 function toggleGroup(label: string): void {
   const next = new Set(closedGroups.value);

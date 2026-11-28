@@ -6,7 +6,8 @@
     :placeholder="models.length === 0 ? 'No Models' : undefined"
     :fallback-label="fallbackLabel"
     :disabled="disabled"
-    :aria-label="ariaLabel"
+    :label="label"
+    :tooltip="tooltip"
     options-label="Models"
     filterable
     @select="forwardSelect"
@@ -20,6 +21,7 @@ import providerLabel from '../lib/model-selector';
 import type { ModelOption } from '../lib/pi/model-scope';
 
 import UiSelect from './ui/UiSelect.vue';
+import type { ActionTooltip } from './ui/action-tooltip';
 
 const modelValue = defineModel<string>({ default: '' });
 const open = defineModel<boolean>('open', { default: false });
@@ -29,11 +31,12 @@ const props = withDefaults(
     models: ModelOption[];
     fallbackLabel?: string;
     disabled?: boolean;
-    ariaLabel?: string;
+    label: string;
+    tooltip?: ActionTooltip;
   }>(),
   {
+    tooltip: undefined,
     fallbackLabel: undefined,
-    ariaLabel: undefined,
   },
 );
 const emit = defineEmits<{ select: [value: string] }>();

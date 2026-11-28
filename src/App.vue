@@ -17,61 +17,60 @@
         @mousedown="handleTitlebarMouseDown"
         @dblclick="handleTitlebarDoubleClick"
       >
-        <UiTooltip
-          text="Open Project"
-          shortcut="Mod+O"
-        >
-          <span class="first-run-project-anchor">
-            <UiMenu
-              v-model:open="firstRunProjectMenuOpen"
-              :items="firstRunProjectMenuItems"
-              side="bottom"
-            >
-              <template #trigger
-                ><UiIconButton
-                  label="Open Project"
-                  size="md"
-                  variant="fill"
-                  :disabled="projectActionsDisabled"
-                  ><UiIcon name="folder-plus" /></UiIconButton
-              ></template>
-            </UiMenu>
-          </span>
-        </UiTooltip>
-        <UiTooltip
-          text="Command Palette"
-          side="bottom"
-          content-class="first-run-palette-tooltip"
-        >
-          <template #content
-            ><span
-              >Command Palette
-              <kbd>{{ formatShortcut('Mod+K', platform) }}</kbd></span
-            ></template
+        <span class="first-run-project-anchor">
+          <UiMenu
+            v-model:open="firstRunProjectMenuOpen"
+            :items="firstRunProjectMenuItems"
+            side="bottom"
           >
-          <UiIconButton
-            label="Open Command Palette"
-            size="md"
-            variant="fill"
-            @click="togglePalette"
+            <template #trigger>
+              <UiIconButton
+                ref="firstRunProjectTrigger"
+                :label="openProjectLabel"
+                size="md"
+                variant="fill"
+                :disabled="projectActionsDisabled"
+                :tooltip="false"
+              >
+                <UiIcon name="folder-plus" />
+              </UiIconButton>
+            </template>
+          </UiMenu>
+          <UiTooltip
+            :anchor="firstRunProjectTrigger?.button"
+            :text="openProjectLabel"
+            shortcut="Mod+O"
+            :disabled="firstRunProjectMenuOpen || projectActionsDisabled"
+          />
+        </span>
+        <UiIconButton
+          label="Open Command Palette"
+          size="md"
+          variant="fill"
+          :tooltip="{
+            text: 'Command Palette',
+            shortcut: 'Mod+K',
+            side: 'bottom',
+            contentClass: 'first-run-palette-tooltip',
+          }"
+          @click="togglePalette"
+        >
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
           >
-            <svg
-              aria-hidden="true"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.8"
-              stroke-linecap="round"
-            >
-              <circle
-                cx="10.8"
-                cy="10.8"
-                r="6.5"
-              />
-              <path d="m16 16 5 5" />
-            </svg>
-          </UiIconButton>
-        </UiTooltip>
+            <circle
+              cx="10.8"
+              cy="10.8"
+              r="6.5"
+            />
+            <path d="m16 16 5 5" />
+          </svg>
+        </UiIconButton>
       </header>
       <section class="first-run-content">
         <div
@@ -90,20 +89,18 @@
           <div class="first-run-actions">
             <UiButton
               ref="firstRunLocalProjectButton"
+              label="Open Local Project"
               variant="ghost"
               size="md"
               @click="addLocalProject"
-            >
-              Open Local Project
-            </UiButton>
+            />
             <UiButton
               ref="firstRunRemoteProjectButton"
+              label="Open Remote Project"
               variant="ghost"
               size="md"
               @click="openRemoteProjectDialog"
-            >
-              Open Remote Project
-            </UiButton>
+            />
           </div>
         </template>
       </section>
@@ -213,11 +210,10 @@
           <template v-else>
             <UiButton
               v-if="activeController?.reload?.status === 'unknown'"
+              label="Recover Pi Runtime"
               :disabled="activeController.stopping"
               @click="recoverActiveReload"
-            >
-              Recover Pi Runtime
-            </UiButton>
+            />
             <ComposerBar
               ref="composerBar"
               :reload-status="activeController?.reload?.status"
@@ -382,6 +378,8 @@ async function recoverActiveReload(): Promise<void> {
 }
 const messageQueue = ref<InstanceType<typeof MessageQueue>>();
 const firstRunProjectMenuOpen = ref(false);
+const openProjectLabel = 'Open Project';
+const firstRunProjectTrigger = ref<InstanceType<typeof UiIconButton>>();
 const firstRunLocalProjectButton = ref<InstanceType<typeof UiButton>>();
 const firstRunRemoteProjectButton = ref<InstanceType<typeof UiButton>>();
 const windowFocused = ref(true);
@@ -2188,7 +2186,7 @@ function isTitlebarControl(target: EventTarget | null): boolean {
   height: 16px;
 }
 
-:global(.first-run-palette-tooltip span) {
+:global(.first-run-palette-tooltip .ui-tooltip-label) {
   display: inline-flex;
   align-items: center;
   gap: 8px;

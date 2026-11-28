@@ -277,6 +277,8 @@ flowchart LR
 <img src="./hostile.png" onerror="window.__TAU_MARKDOWN_IMAGE_EXECUTED__ = true">
 
 <script>window.__TAU_MARKDOWN_IMAGE_EXECUTED__ = true</script>
+
+<button data-tau-copy data-tau-expand>Untrusted control</button>
 `;
   await openFixture(page, {
     [transcriptPath]: { filename: 'README.md', sourcePath: first, source },
@@ -365,13 +367,21 @@ flowchart LR
   await expect(document).toContainText('Relative picture');
   await expect(document.locator('img')).toHaveCount(0);
   await expect(document.locator('script')).toHaveCount(0);
+  const untrusted = document.getByRole('button', { name: 'Untrusted control' });
+  await expect(untrusted).not.toHaveAttribute('data-tau-copy');
+  await expect(untrusted).not.toHaveAttribute('data-tau-expand');
   expect(
     await page.evaluate(() => window.__TAU_MARKDOWN_IMAGE_EXECUTED__),
   ).not.toBe(true);
 
   const expand = dialog.locator('.diagram-expand');
   await expect(expand).toHaveCount(1, { timeout: 20_000 });
+  const tooltip = page.locator('.ui-tooltip:visible');
+  await expand.hover();
+  await expect(tooltip).toHaveCount(1);
+  await expect(tooltip).toHaveText('Expand Diagram');
   await expand.click();
+  await expect(tooltip).toHaveCount(0);
   await expect(page.getByRole('dialog', { name: 'Diagram' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(
@@ -386,7 +396,16 @@ flowchart LR
 
   await page.setViewportSize({ width: 520, height: 700 });
   const tsCode = document.locator('.code-block[data-tau-lang="ts"]');
-  await tsCode.getByRole('button', { name: 'Copy Code' }).click();
+  const copy = tsCode.getByRole('button', { name: 'Copy Code' });
+  const close = dialog.getByRole('button', { name: 'Close Preview' });
+  await close.focus();
+  await expect(tooltip).toHaveText('Close Preview');
+  await copy.hover();
+  await expect(tooltip.filter({ hasText: 'Copy Code' })).toBeVisible();
+  await expect(tooltip).toHaveCount(1);
+  await expect(close).toBeFocused();
+  await expect(copy).toHaveAccessibleDescription('Copy Code');
+  await copy.click();
   await expect(tsCode.locator('.code-copy')).toHaveAttribute(
     'data-copied',
     'true',
