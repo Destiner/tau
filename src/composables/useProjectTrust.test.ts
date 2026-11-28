@@ -142,7 +142,7 @@ it('waits for an in-flight grant before reinspecting from another session', asyn
     expect(ui.open.value).toBe(true);
     expect(ui.untrusted.value).toBe(true);
     expect(native).toHaveBeenCalledTimes(3);
-    expect(projectTrustRevision(target.folder)).toBeDefined();
+    expect(projectTrustRevision()).toBeDefined();
   } finally {
     stop();
   }

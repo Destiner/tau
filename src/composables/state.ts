@@ -1106,7 +1106,7 @@ function inheritControllerSettings(
     controller.currentEffort = source.currentEffort;
   }
 
-  const trustRevision = projectTrustRevision(controller.projectPath);
+  const trustRevision = projectTrustRevision();
   const commandSource = [...state.controllers]
     .reverse()
     .find(

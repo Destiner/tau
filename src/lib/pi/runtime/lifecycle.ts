@@ -237,7 +237,7 @@ async function startController(
   retireProjectTrustGeneration(controller, controller.generation);
   controller.projectTrustSuspended = false;
   // A grant confirmed while this launch is in flight may be too late for Pi.
-  const trustRevisionAtLaunch = projectTrustRevision(project.path);
+  const trustRevisionAtLaunch = projectTrustRevision();
   clearReload(controller, true);
   controller.reloadFence = undefined;
   cancelSetup(controller);

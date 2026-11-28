@@ -1,5 +1,60 @@
 use super::*;
 
+#[cfg(unix)]
+#[test]
+fn remote_start_checks_ownership_before_the_probe_and_again_before_spawn() {
+    let _lock = ENVIRONMENT_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let fixture = NativePiFixture::new(None);
+    let (app, _) = fixture.app_and_events();
+    let handle = app.handle().clone();
+    let state = handle.state::<PiState>();
+    let telemetry = handle.state::<Telemetry>();
+    claim_for_test(&state, "owner-a");
+
+    let ssh = fixture._root.path().join("ssh");
+    let calls = fixture._root.path().join("ssh-calls");
+    std::fs::write(
+        &ssh,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$1\" >> {}\nprintf 'user dev\\nhostname example\\nport 22\\n'\n",
+            shell_words::quote(calls.to_str().unwrap()),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let prepare = |owner| {
+        prepare_remote_pi(
+            &state.inner,
+            owner,
+            format!("{} example", shell_words::quote(ssh.to_str().unwrap())),
+            "/workspace".into(),
+            None,
+        )
+    };
+    assert!(matches!(prepare("stale"), Err(error) if error.contains("no longer owns")));
+    assert!(!calls.exists());
+
+    let (command, trust) = prepare("owner-a").expect("probe for current owner");
+    assert_eq!(std::fs::read_to_string(&calls).unwrap(), "-G\n");
+    claim_pi_frontend_inner(&state.inner, "owner-b".into(), 1).expect("replace frontend owner");
+    assert!(spawn_command(
+        handle.clone(),
+        &state,
+        &telemetry,
+        None,
+        "owner-a".into(),
+        "runtime-a".into(),
+        command,
+        Some(trust),
+    )
+    .unwrap_err()
+    .contains("no longer owns"));
+    assert!(state.inner.lock().unwrap().processes.is_empty());
+    assert_eq!(std::fs::read_to_string(&calls).unwrap(), "-G\n");
+}
+
 #[test]
 fn frontend_takeover_stops_stale_runtime_before_replacement_starts() {
     let _lock = ENVIRONMENT_LOCK

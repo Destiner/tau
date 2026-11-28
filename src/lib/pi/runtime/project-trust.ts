@@ -215,15 +215,16 @@ function retireProjectTrustGeneration(
   }
 }
 
-const projectTrustRevisions = new Map<string, symbol>();
+let catalogueRevision: symbol | undefined;
 
-function projectTrustRevision(projectPath: string): symbol | undefined {
-  return projectTrustRevisions.get(projectPath);
+function projectTrustRevision(): symbol | undefined {
+  return catalogueRevision;
 }
 
-// A saved grant doesn't touch any live process or its command catalogue.
-function markProjectTrustGranted(projectPath: string): void {
-  projectTrustRevisions.set(projectPath, Symbol());
+// Pi may inherit grants through paths or aliases Tau cannot resolve. Invalidate
+// future catalogue reuse conservatively without changing any live process.
+function markProjectTrustGranted(): void {
+  catalogueRevision = Symbol();
 }
 
 export {

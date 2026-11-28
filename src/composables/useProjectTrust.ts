@@ -149,7 +149,7 @@ export default function useProjectTrust(
       if (unconfirmed) {
         unconfirmedTargets.delete(owner.projectPath);
         if (result.exact && sameTarget(unconfirmed, result.target)) {
-          markProjectTrustGranted(owner.projectPath);
+          markProjectTrustGranted();
         }
       }
       phase.value = result.saved
@@ -234,7 +234,7 @@ export default function useProjectTrust(
         )
           throw { kind: 'unconfirmed' };
         unconfirmedTargets.delete(owner.projectPath);
-        markProjectTrustGranted(owner.projectPath);
+        markProjectTrustGranted();
         if (isCurrent(owner)) binding.value = undefined;
       } catch (error) {
         const kind = errorPhase(error) ?? 'unconfirmed';

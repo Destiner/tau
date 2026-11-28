@@ -151,7 +151,7 @@ impl SshExecutableStamp {
 }
 
 impl SshConfig {
-    fn read(command: &Command) -> TrustReply<Self> {
+    fn read(command: &Command, require_no_forwarding: bool) -> TrustReply<Self> {
         let command = SshConnection::trust_config_command(command);
         let executable = Path::new(command.get_program())
             .canonicalize()
@@ -161,6 +161,17 @@ impl SshConfig {
             capture_success(command, SSH_CONFIG_TIMEOUT).map_err(|_| TrustError::Unavailable)?;
         if SshExecutableStamp::read(&executable).as_ref() != Some(&stamp) {
             return Err(TrustError::Mismatch);
+        }
+        // Some OpenSSH versions report an explicit agent socket even after -a.
+        if require_no_forwarding {
+            for option in [b"forwardagent".as_slice(), b"forwardx11"] {
+                let mut values = config
+                    .split(|byte| *byte == b'\n')
+                    .filter_map(|line| line.strip_prefix(option)?.strip_prefix(b" "));
+                if values.next() != Some(b"no") || values.next().is_some() {
+                    return Err(TrustError::Unavailable);
+                }
+            }
         }
         let mut digest = Sha256::new();
         for line in config.split_inclusive(|byte| *byte == b'\n') {
@@ -221,7 +232,7 @@ impl TrustLaunch {
     }
 
     pub(super) fn capture_ssh_config(&mut self, command: &Command) {
-        self.ssh = SshConfig::read(command).ok();
+        self.ssh = SshConfig::read(command, false).ok();
     }
 
     fn new(location: Location, ssh: Option<SshConfig>) -> Self {
@@ -699,7 +710,7 @@ fn remote_command(
     launch: &SshConfig,
 ) -> TrustReply<HelperCommand> {
     let command = connection.trust_command(&remote_script(folder, request, nonce, node));
-    if &SshConfig::read(&command)? != launch {
+    if &SshConfig::read(&command, true)? != launch {
         return Err(TrustError::Mismatch);
     }
     Ok(HelperCommand {

@@ -150,7 +150,8 @@ impl SshConnection {
                 "-o",
                 "ConnectionAttempts=1",
             ],
-            &["-T", "--"],
+            // Short flags override earlier settings, including a connection's -A or -Y.
+            &["-a", "-x", "-T", "--"],
         );
         command.env("SSH_ASKPASS_REQUIRE", "never");
         command
@@ -598,6 +599,32 @@ mod tests {
                 .any(|argument| argument == "ServerAliveCountMax=3"));
             assert!(!arguments.windows(2).any(|pair| pair == ["-S", "none"]));
             assert_eq!(&arguments[..2], ["-p", "2222"]);
+        }
+    }
+
+    #[test]
+    fn trust_connection_disables_effective_agent_and_x11_forwarding() {
+        if !Path::new("/usr/bin/ssh").is_file() {
+            return;
+        }
+        for flags in ["-A -X", "-AY", "-AXY"] {
+            let connection =
+                SshConnection::parse(&format!("/usr/bin/ssh -F none {flags} dev@example")).unwrap();
+            for (command, enabled) in [
+                (connection.pi_command("true"), "yes"),
+                (connection.trust_command("true"), "no"),
+            ] {
+                let config = SshConnection::trust_config_command(&command)
+                    .output()
+                    .unwrap();
+                assert!(config.status.success());
+                let config = String::from_utf8(config.stdout).unwrap();
+                for option in ["forwardagent", "forwardx11"] {
+                    assert!(config
+                        .lines()
+                        .any(|line| line == format!("{option} {enabled}")));
+                }
+            }
         }
     }
 

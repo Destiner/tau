@@ -18,6 +18,7 @@ import { rpc, startController, stopControllerProcess } from './lifecycle';
 import {
   effectiveProjectTrust,
   markProjectTrustGranted,
+  projectTrustRevision,
   projectTrustStatusKey,
 } from './project-trust';
 
@@ -371,12 +372,13 @@ it('does not inherit commands from a launch already in flight when trust was sav
     key: 'other',
     runtimeId: 'other-runtime',
     projectPath: '/another-account',
+    commandCatalogueTrustRevision: projectTrustRevision(),
   });
   other.commands = [{ name: 'other', source: 'extension' }];
   other.commandsLoaded = true;
   vi.mocked(invokeTraced).mockImplementation(async (command) => {
     if (command !== 'start_pi') return undefined as never;
-    markProjectTrustGranted(projectPath);
+    markProjectTrustGranted();
     return 2 as never;
   });
   await startController(controller, {
@@ -409,8 +411,55 @@ it('does not inherit commands from a launch already in flight when trust was sav
     projectPath: other.projectPath,
   });
   inheritControllerSettings(otherSibling, other);
-  expect(otherSibling.commands).toEqual(other.commands);
-  expect(otherSibling.commandsLoaded).toBe(true);
+  expect(otherSibling.commandsLoaded).toBe(false);
+  expect(other.commands).toEqual([{ name: 'other', source: 'extension' }]);
+  expect(other.commandsLoaded).toBe(true);
+});
+
+it('invalidates future catalogue reuse for separately registered descendants without changing live controllers', () => {
+  const parentPath = '/registered-trust-parent';
+  const childPath = `${parentPath}/child`;
+  const projects = [parentPath, childPath].map((path) => ({
+    path,
+    workingDirectory: path,
+    name: path,
+    selected: false,
+    collapsed: false,
+    sessions: [],
+  }));
+  state.workspace = { activeProjectPath: parentPath, piPath: null, projects };
+  const parent = mount({
+    projectPath: parentPath,
+    commandCatalogueTrustRevision: projectTrustRevision(),
+    commands: [{ name: 'parent-old', source: 'extension' }],
+    commandsLoaded: true,
+  });
+  const child = mount({
+    key: 'child',
+    runtimeId: 'child-runtime',
+    projectPath: childPath,
+    commandCatalogueTrustRevision: projectTrustRevision(),
+    commands: [{ name: 'child-old', source: 'extension' }],
+    commandsLoaded: true,
+    draft: 'keep child draft',
+  });
+  const beforeGrant = sessionControllerFixture({ projectPath: childPath });
+  inheritControllerSettings(beforeGrant, child);
+  expect(beforeGrant.commands).toEqual(child.commands);
+  expect(beforeGrant.commandsLoaded).toBe(true);
+
+  markProjectTrustGranted();
+
+  expect(parent.commandsLoaded).toBe(true);
+  expect(child).toMatchObject({
+    commands: [{ name: 'child-old', source: 'extension' }],
+    commandsLoaded: true,
+    draft: 'keep child draft',
+  });
+  const afterGrant = sessionControllerFixture({ projectPath: childPath });
+  inheritControllerSettings(afterGrant, child);
+  expect(afterGrant.commandsLoaded).toBe(false);
+  expect(afterGrant.commands).toEqual([]);
 });
 
 describe('private Pi helper', () => {

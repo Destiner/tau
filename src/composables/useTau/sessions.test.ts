@@ -153,7 +153,7 @@ describe('session drafts and selection', () => {
       generation: secondController.generation,
     };
     vi.mocked(invoke).mockClear();
-    markProjectTrustGranted(project.path);
+    markProjectTrustGranted();
     expect(vi.mocked(invoke)).not.toHaveBeenCalled();
     expect(secondController).toMatchObject(commandsAndDraft);
     expect(firstController).toMatchObject({

@@ -13,15 +13,15 @@ use environment::{
 use opentelemetry::Value as TelemetryValue;
 use ownership::send_pi_to_state;
 use ownership::{
-    claim_pi_frontend_inner, spawn_command, stop_runtime_process, validate_owner_id, PiOwnership,
-    StoppedRuntime,
+    claim_pi_frontend_inner, spawn_command, stop_runtime_process, validate_owner_id, PiManager,
+    PiOwnership, StoppedRuntime,
 };
 use serde_json::Value;
 #[cfg(not(dev))]
 use std::path::PathBuf;
 use std::{
     process::Command,
-    sync::{atomic::Ordering, Arc},
+    sync::{atomic::Ordering, Arc, Mutex},
 };
 use tauri::{AppHandle, Runtime, State};
 use transport::{emit_pi_event, PiEvent};
@@ -241,7 +241,7 @@ fn start_pi_with<R: Runtime>(
 }
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub fn start_pi_remote(
+pub async fn start_pi_remote(
     app: AppHandle,
     state: State<'_, PiState>,
     telemetry: State<'_, Telemetry>,
@@ -257,14 +257,20 @@ pub fn start_pi_remote(
         .as_ref()
         .and_then(|context| telemetry.start_command_span(context, "start_pi_remote"));
     let span_context = command_span.as_ref().map(|span| span.span_context());
-    let connection = SshConnection::parse(&connection_string)?;
-    let mut trust = project_trust::TrustLaunch::remote(connection_string, working_directory);
-    let command = connection.pi_command(&remote_pi_command(
-        trust.folder(),
-        session_path.as_deref(),
-        trust.nonce(),
-    ));
-    trust.capture_ssh_config(&command);
+    let inner = Arc::clone(&state.inner);
+    let probe_owner = owner_id.clone();
+    let (command, trust) = tauri::async_runtime::spawn_blocking(move || {
+        prepare_remote_pi(
+            &inner,
+            &probe_owner,
+            connection_string,
+            working_directory,
+            session_path,
+        )
+    })
+    .await
+    .map_err(|_| "Tau could not prepare the remote Pi runtime. Try again.".to_string())??;
+
     spawn_command(
         app,
         &state,
@@ -276,6 +282,28 @@ pub fn start_pi_remote(
         Some(trust),
     )
 }
+fn prepare_remote_pi(
+    manager: &Mutex<PiManager>,
+    owner_id: &str,
+    connection_string: String,
+    working_directory: String,
+    session_path: Option<String>,
+) -> Result<(Command, project_trust::TrustLaunch), String> {
+    let connection = SshConnection::parse(&connection_string)?;
+    let mut trust = project_trust::TrustLaunch::remote(connection_string, working_directory);
+    let command = connection.pi_command(&remote_pi_command(
+        trust.folder(),
+        session_path.as_deref(),
+        trust.nonce(),
+    ));
+    manager
+        .lock()
+        .map_err(|_| "Pi process state is unavailable.".to_string())?
+        .require_owner(owner_id)?;
+    trust.capture_ssh_config(&command);
+    Ok((command, trust))
+}
+
 #[tauri::command]
 pub fn send_pi<R: Runtime>(
     app: AppHandle<R>,

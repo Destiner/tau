@@ -615,7 +615,55 @@ fn native_binding_checks_the_managed_process_and_pins_startup_identity() {
 }
 
 fn test_ssh_config(connection: &SshConnection) -> SshConfig {
-    SshConfig::read(&connection.pi_command("launching-pi")).unwrap()
+    SshConfig::read(&connection.pi_command("launching-pi"), false).unwrap()
+}
+
+fn remote_startup(f: &Fixture, connection: &SshConnection) -> Value {
+    fs::create_dir(&f.agent).unwrap();
+    // Run the shipped launch bridge from a stand-in Pi CLI, independently of the grant helper.
+    executable(
+        &f.pi.canonicalize().unwrap(),
+        r#"#!/usr/bin/env node
+(async () => {
+  const { pathToFileURL } = require('node:url');
+  const extension = process.argv[process.argv.indexOf('--extension') + 1];
+  const { default: bridge } = await import(pathToFileURL(extension).href);
+  bridge({
+    registerCommand() {},
+    on(event, handler) {
+      if (event !== 'session_start') throw Error('expected session_start');
+      handler({}, {
+        cwd: process.cwd(),
+        isProjectTrusted: () => false,
+        sessionManager: { getSessionId: () => 'session', getSessionFile: () => undefined },
+      });
+    },
+  });
+})().catch(() => { process.exitCode = 1; });
+"#,
+    );
+    let command = connection.pi_command(&crate::ssh::remote_pi_command(
+        f.project.to_str().unwrap(),
+        None,
+        NONCE,
+    ));
+    let output = capture_success(command, LOCAL_TIMEOUT)
+        .unwrap_or_else(|_| panic!("fake remote Pi launch failed"));
+    let frame = output
+        .split(|byte| *byte == b'\n')
+        .find_map(|line| line.strip_prefix(PRIVATE_FRAME))
+        .expect("launch trust frame");
+    let startup: Observation = serde_json::from_slice(frame).unwrap();
+    assert_eq!(startup.nonce, NONCE);
+    assert_eq!(startup.cwd, f.project.to_str().unwrap());
+    assert!(!startup.trusted);
+    startup.identity.expect("independent launch identity")
+}
+
+fn remote_request(f: &Fixture, startup: &Value, previous: Option<&Inspection>) -> String {
+    let mut req = request(&f.project, &f.project, previous);
+    req["startup"] = startup.clone();
+    req.to_string()
 }
 
 fn fake_ssh(f: &Fixture, extra: &str) -> SshConnection {
@@ -632,7 +680,9 @@ case "$dest" in
   *) exit 9 ;;
 esac
 if [ "$mode" = config ]; then
-    printf 'user dev\nhostname %s\nport 2222\n' "$host"
+    forwardagent=no
+    [ ! -e {forward_flag} ] || forwardagent=/tmp/agent.sock
+    printf 'user dev\nhostname %s\nport 2222\nforwardagent %s\nforwardx11 no\n' "$host" "$forwardagent"
     exit 0
 fi
 export HOME={home} PI_CODING_AGENT_DIR={agent} PATH={bin}:/usr/bin:/bin SHELL=/bin/sh
@@ -644,6 +694,7 @@ printf 'login banner\n'
 exec /bin/sh -c "$last"
 "#,
             peer_flag = shell_words::quote(f.root.join("peer-change").to_str().unwrap()),
+            forward_flag = shell_words::quote(f.root.join("forwarding-change").to_str().unwrap()),
             home = shell_words::quote(f.home.to_str().unwrap()),
             agent = shell_words::quote(f.agent.to_str().unwrap()),
             bin = shell_words::quote(f.pi.parent().unwrap().to_str().unwrap())
@@ -658,8 +709,9 @@ fn fake_ssh_runs_quoted_exact_folder_and_detects_changed_remote_endpoint() {
     let first = fake_ssh(&f, "");
     let folder = f.project.to_str().unwrap();
     let config = test_ssh_config(&first);
+    let startup = remote_startup(&f, &first);
     let run = |connection: &SshConnection, previous| {
-        let req = request(&f.project, &f.project, previous).to_string();
+        let req = remote_request(&f, &startup, previous);
         invoke_helper(
             remote_command(
                 folder,
@@ -680,6 +732,7 @@ fn fake_ssh_runs_quoted_exact_folder_and_detects_changed_remote_endpoint() {
     );
     assert_eq!(identified.0.target.folder, folder);
     assert!(!identified.0.saved);
+    assert_eq!(identified.1, startup);
     let record = inspection(
         Location::Remote {
             folder: folder.into(),
@@ -702,12 +755,39 @@ fn fake_ssh_runs_quoted_exact_folder_and_detects_changed_remote_endpoint() {
     // Keep ssh -G unchanged while changing the peer reported by the remote process.
     let peer_flag = f.root.join("peer-change");
     fs::write(&peer_flag, "").unwrap();
+    assert_eq!(run(&first, None).unwrap_err(), TrustError::Mismatch);
     assert_eq!(
         run(&first, Some(&record)).unwrap_err(),
         TrustError::Mismatch
     );
     fs::remove_file(peer_flag).unwrap();
-    assert!(run(&first, Some(&record)).unwrap().0.saved);
+    assert!(!f.trust_file().exists());
+
+    let forward_flag = f.root.join("forwarding-change");
+    fs::write(&forward_flag, "").unwrap();
+    assert_eq!(
+        run(&first, Some(&record)).unwrap_err(),
+        TrustError::Unavailable
+    );
+    fs::remove_file(forward_flag).unwrap();
+    assert!(!f.trust_file().exists());
+
+    let old_agent = f.root.join("old-agent");
+    fs::rename(&f.agent, &old_agent).unwrap();
+    fs::create_dir(&f.agent).unwrap();
+    assert_eq!(
+        run(&first, Some(&record)).unwrap_err(),
+        TrustError::Mismatch
+    );
+    assert!(!f.trust_file().exists());
+    assert!(!old_agent.join("trust.json").exists());
+    fs::remove_dir(&f.agent).unwrap();
+    fs::rename(old_agent, &f.agent).unwrap();
+
+    let granted = run(&first, Some(&record)).unwrap();
+    assert!(granted.0.saved && granted.0.exact);
+    let readback = run(&first, None).unwrap().0;
+    assert!(readback.saved && readback.exact);
     assert!(!f.home.join(".pi/agent/trust.json").exists());
 }
 
@@ -763,7 +843,8 @@ fn fake_ssh_disconnects_and_timeouts_do_not_fall_back_or_claim_success() {
     let Some(f) = Fixture::new() else { return };
     let first = fake_ssh(&f, "");
     let folder = f.project.to_str().unwrap();
-    let req = request(&f.project, &f.project, None).to_string();
+    let startup = remote_startup(&f, &first);
+    let req = remote_request(&f, &startup, None);
     let config = test_ssh_config(&first);
     let verified = invoke_helper(
         remote_command(
@@ -787,7 +868,7 @@ fn fake_ssh_disconnects_and_timeouts_do_not_fall_back_or_claim_success() {
         &f.project,
         verified,
     );
-    let grant = request(&f.project, &f.project, Some(&record)).to_string();
+    let grant = remote_request(&f, &startup, Some(&record));
     let stalled = fake_ssh(&f, "exec /bin/sleep 2");
     let mut helper = remote_command(
         folder,

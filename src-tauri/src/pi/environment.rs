@@ -1,14 +1,22 @@
-#[cfg(unix)]
-use std::os::unix::{fs::PermissionsExt, process::CommandExt};
+#[cfg(not(unix))]
+use std::sync::mpsc;
 use std::{
     env,
     ffi::{OsStr, OsString},
     io::Read,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
-    sync::{mpsc, OnceLock},
+    process::{Child, Command, Stdio},
+    sync::OnceLock,
     thread,
     time::{Duration, Instant},
+};
+#[cfg(unix)]
+use std::{
+    io,
+    os::{
+        fd::AsRawFd,
+        unix::{fs::PermissionsExt, process::CommandExt},
+    },
 };
 
 const LOGIN_SHELL_TIMEOUT: Duration = Duration::from_secs(5);
@@ -274,19 +282,113 @@ fn capture_stdout_inner(
     require_success: bool,
 ) -> Result<Vec<u8>, CaptureFailure> {
     #[cfg(unix)]
-    if require_success {
-        command.process_group(0);
-    }
-    let mut child = command
+    command.process_group(0);
+    let child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .map_err(|_| CaptureFailure::NotStarted)?;
+    capture_child_stdout(child, timeout, require_success).ok_or(CaptureFailure::Unknown)
+}
+
+#[cfg(unix)]
+fn capture_child_stdout(
+    mut child: Child,
+    timeout: Duration,
+    require_success: bool,
+) -> Option<Vec<u8>> {
+    let deadline = Instant::now() + timeout;
+    let pid = child.id() as libc::pid_t;
+    let output = (|| {
+        let mut stdout = child.stdout.take()?;
+        set_nonblocking(&stdout).ok()?;
+        let mut exited = false;
+        let mut check_exit = || {
+            if Instant::now() >= deadline {
+                return Err(io::ErrorKind::TimedOut.into());
+            }
+            if !exited {
+                if let Some(success) = capture_exit_status(pid)? {
+                    if require_success && !success {
+                        return Err(io::Error::other("capture command failed"));
+                    }
+                    exited = true;
+                }
+            }
+            Ok(exited)
+        };
+        let output = read_bounded_stdout_with(
+            |buffer| loop {
+                check_exit()?;
+                match stdout.read(buffer) {
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                        thread::sleep(PROCESS_POLL_INTERVAL);
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                    result => return result,
+                }
+            },
+            LOGIN_SHELL_OUTPUT_LIMIT_BYTES,
+        )?;
+        while !check_exit().ok()? {
+            thread::sleep(PROCESS_POLL_INTERVAL);
+        }
+        Some(output)
+    })();
+    // Signal before reaping so the group ID cannot have been recycled, even
+    // if the wrapper exited before its descendants closed stdout.
+    if output.is_none() && unsafe { libc::kill(-pid, libc::SIGKILL) } != 0 {
+        let _ = child.kill();
+    }
+    child.wait().ok()?;
+    output
+}
+
+#[cfg(unix)]
+fn set_nonblocking(pipe: &impl AsRawFd) -> io::Result<()> {
+    let fd = pipe.as_raw_fd();
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags == -1 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn capture_exit_status(pid: libc::pid_t) -> io::Result<Option<bool>> {
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let result = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            pid as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    if result != 0 {
+        let error = io::Error::last_os_error();
+        return if error.kind() == io::ErrorKind::Interrupted {
+            Ok(None)
+        } else {
+            Err(error)
+        };
+    }
+    Ok(unsafe {
+        (info.si_pid() != 0).then(|| info.si_code == libc::CLD_EXITED && info.si_status() == 0)
+    })
+}
+
+#[cfg(not(unix))]
+fn capture_child_stdout(
+    mut child: Child,
+    timeout: Duration,
+    require_success: bool,
+) -> Option<Vec<u8>> {
     let Some(stdout) = child.stdout.take() else {
         let _ = child.kill();
         let _ = child.wait();
-        return Err(CaptureFailure::Unknown);
+        return None;
     };
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
@@ -298,39 +400,36 @@ fn capture_stdout_inner(
         match child.try_wait() {
             Ok(Some(status)) => {
                 if require_success && !status.success() {
-                    return Err(CaptureFailure::Unknown);
+                    return None;
                 }
                 break;
             }
             Ok(None) if Instant::now() < deadline => thread::sleep(PROCESS_POLL_INTERVAL),
             _ => {
-                #[cfg(unix)]
-                if require_success {
-                    // An SSH proxy or a login shell child can still own the output pipe.
-                    unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
-                }
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(CaptureFailure::Unknown);
+                return None;
             }
         }
     }
-    let remaining = deadline
-        .checked_duration_since(Instant::now())
-        .ok_or(CaptureFailure::Unknown)?;
-    receiver
-        .recv_timeout(remaining)
-        .ok()
-        .flatten()
-        .ok_or(CaptureFailure::Unknown)
+    let remaining = deadline.checked_duration_since(Instant::now())?;
+    receiver.recv_timeout(remaining).ok().flatten()
 }
 
+#[cfg(any(test, not(unix)))]
 pub(super) fn read_bounded_stdout(mut stdout: impl Read, limit: usize) -> Option<Vec<u8>> {
+    read_bounded_stdout_with(|buffer| stdout.read(buffer), limit)
+}
+
+fn read_bounded_stdout_with(
+    mut read_stdout: impl FnMut(&mut [u8]) -> std::io::Result<usize>,
+    limit: usize,
+) -> Option<Vec<u8>> {
     let mut output = Vec::new();
     let mut overflow = false;
     let mut buffer = [0_u8; 8192];
     loop {
-        let read = stdout.read(&mut buffer).ok()?;
+        let read = read_stdout(&mut buffer).ok()?;
         if read == 0 {
             return (!overflow).then_some(output);
         }
@@ -366,5 +465,56 @@ pub(super) fn build_child_path(
 fn push_directory(directories: &mut Vec<PathBuf>, directory: PathBuf) {
     if !directories.contains(&directory) {
         directories.push(directory);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capture_stops_descendant_holding_stdout_after_wrapper_exits() {
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "/bin/sleep 10 & exit 0"])
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn wrapper");
+        let mut stderr = child.stderr.take().expect("stderr witness pipe");
+        set_nonblocking(&stderr).expect("make witness pipe nonblocking");
+        let mut byte = [0];
+        let pid = child.id() as libc::pid_t;
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match capture_exit_status(pid).expect("observe wrapper exit") {
+                Some(true) => break,
+                None if Instant::now() < deadline => thread::sleep(PROCESS_POLL_INTERVAL),
+                status => panic!("wrapper did not exit successfully: {status:?}"),
+            }
+        }
+        assert_eq!(
+            stderr.read(&mut byte).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock,
+            "descendant must still hold the pipe before capture starts",
+        );
+
+        let started = Instant::now();
+        assert!(capture_child_stdout(child, Duration::from_millis(100), true).is_none());
+        assert!(started.elapsed() < Duration::from_secs(2));
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match stderr.read(&mut byte) {
+                Ok(0) => break,
+                Err(error)
+                    if error.kind() == io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+                {
+                    thread::sleep(PROCESS_POLL_INTERVAL);
+                }
+                result => panic!("descendant still held the witness pipe: {result:?}"),
+            }
+        }
     }
 }
