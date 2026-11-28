@@ -2,7 +2,13 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { state, type ProjectSummary, type SessionSummary } from '../state';
+import {
+  state,
+  type ProjectSummary,
+  type RemoteProjectImport,
+  type SessionSummary,
+  type SshDestination,
+} from '../state';
 
 import useTau from './index';
 
@@ -93,7 +99,7 @@ describe('workspace persistence and saved preview', () => {
     'waits to persist removal until an older %s import has finished',
     async (kind) => {
       const { project } = fixture();
-      const imported = deferred<ProjectSummary>();
+      const imported = deferred<ProjectSummary | RemoteProjectImport>();
       vi.mocked(invoke).mockImplementation(async (command) => {
         if (
           command === 'import_project' ||
@@ -129,14 +135,22 @@ describe('workspace persistence and saved preview', () => {
         importCommand,
       ]);
 
-      imported.resolve({
+      const importedProject: ProjectSummary = {
         path: '/tmp/imported',
         name: 'imported',
         workingDirectory: '/tmp/imported',
         collapsed: false,
         selected: false,
         sessions: [],
-      });
+      };
+      imported.resolve(
+        kind === 'local'
+          ? importedProject
+          : {
+              project: importedProject,
+              recentSshDestinations: [{ host: 'host' }],
+            },
+      );
       await Promise.all([importing, removing]);
 
       expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
@@ -146,6 +160,52 @@ describe('workspace persistence and saved preview', () => {
       tau.dispose();
     },
   );
+
+  it('serializes a forget behind an older remote import and keeps both confirmed changes', async () => {
+    const { project } = fixture();
+    const forgotten = { host: 'older' };
+    const added = { host: 'newer', user: 'me', port: 2222 };
+    state.workspace!.recentSshDestinations = [forgotten];
+    const imported = deferred<RemoteProjectImport>();
+    const forgot = deferred<SshDestination[]>();
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === 'import_remote_project') return imported.promise;
+      if (command === 'forget_ssh_destination') return forgot.promise;
+      return undefined;
+    });
+    const tau = useTau();
+    tau.openRemoteProjectDialog();
+    state.remoteDialogStep = 'directory';
+    state.remoteConnectionString = 'ssh -p 2222 me@newer';
+    state.remoteDirectoryHost = 'newer';
+    state.remoteWorkingDirectory = '/work';
+    const importing = tau.chooseRemoteDirectory('/work', 'select');
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+
+    tau.openRemoteProjectDialog();
+    const forgetting = tau.forgetRecentSshDestination(forgotten);
+    expect(invoke).toHaveBeenCalledTimes(1);
+    imported.resolve({ project, recentSshDestinations: [added, forgotten] });
+    await importing;
+    expect(state.workspace?.recentSshDestinations).toEqual([added, forgotten]);
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith(
+        'forget_ssh_destination',
+        expect.objectContaining({ destination: forgotten }),
+      ),
+    );
+    forgot.resolve([added]);
+    await forgetting;
+
+    expect(state.workspace?.recentSshDestinations).toEqual([added]);
+    expect(state.remoteDialogOpen).toBe(true);
+    expect(state.remoteDialogStep).toBe('connection');
+    expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+      'import_remote_project',
+      'forget_ssh_destination',
+    ]);
+    tau.dispose();
+  });
 
   it('archives and restores rows optimistically without replacing the workspace', async () => {
     const { project, session } = fixture();

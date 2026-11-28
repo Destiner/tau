@@ -4,8 +4,9 @@ mod registry;
 mod sessions;
 
 use projects::{
-    import_project_inner, import_remote_project_inner, remove_project_inner, rename_project_inner,
-    reorder_projects_inner, set_active_project_inner, set_project_collapsed_inner, snapshot,
+    forget_ssh_destination_inner, import_project_inner, import_remote_project_inner,
+    remove_project_inner, rename_project_inner, reorder_projects_inner, set_active_project_inner,
+    set_project_collapsed_inner, snapshot,
 };
 use registry::{archive_revision, load_project_registry, mark_archive_intent};
 use sessions::{mutate_session_archive, register_session_inner, set_active_session_inner};
@@ -16,7 +17,10 @@ pub(crate) use registry::{default_session_dir, remote_project};
 pub(crate) use sessions::list_sessions_in;
 
 use crate::{
-    models::{ProjectSummary, SessionMutationResult, SessionSummary, WorkspaceSnapshot},
+    models::{
+        ProjectSummary, RemoteProjectImportResult, SessionMutationResult, SessionSummary,
+        SshDestination, WorkspaceSnapshot,
+    },
     telemetry::{trace_context::TraceContext, Telemetry},
 };
 use tauri::State;
@@ -52,7 +56,7 @@ pub async fn import_remote_project(
     connection_string: String,
     working_directory: String,
     host: String,
-) -> Result<ProjectSummary, String> {
+) -> Result<RemoteProjectImportResult, String> {
     let _span = telemetry_context
         .as_ref()
         .and_then(|context| telemetry.start_command_span(context, "import_remote_project"));
@@ -60,6 +64,18 @@ pub async fn import_remote_project(
         import_remote_project_inner(connection_string, working_directory, host)
     })
     .await
+}
+
+#[tauri::command]
+pub async fn forget_ssh_destination(
+    telemetry: State<'_, Telemetry>,
+    telemetry_context: Option<TraceContext>,
+    destination: SshDestination,
+) -> Result<Vec<SshDestination>, String> {
+    let _span = telemetry_context
+        .as_ref()
+        .and_then(|context| telemetry.start_command_span(context, "forget_ssh_destination"));
+    run_storage_worker(move || forget_ssh_destination_inner(destination)).await
 }
 
 #[tauri::command]

@@ -135,6 +135,7 @@ pub fn run() {
             ssh::list_remote_directories,
             ssh::probe_remote_project,
             storage::archive_session,
+            storage::forget_ssh_destination,
             storage::import_project,
             storage::import_remote_project,
             storage::load_workspace,

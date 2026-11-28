@@ -115,6 +115,18 @@ keeps the draft and offers **Retry**. After 10 seconds without confirmation,
 **Close** permits leaving the dialog while the write finishes; it does not cancel
 the save, and another save for that project is blocked until it settles.
 
+## Open Remote Project
+
+The SSH connection field opens empty and focused. Use **↓** to move to a
+recent destination and **↑/↓** to move between destinations or back to the
+field. **Enter** on a destination connects immediately; choose a folder in the
+next step to import it. You can also type a connection manually and press
+**Enter** as before.
+
+**Tab** reaches each destination's separate **Forget** button. **Enter** or
+**Space** on Forget removes only the suggestion, without connecting or removing
+projects. The read-only reconnect dialog does not show recent destinations.
+
 ## Local surfaces
 
 Click or activate a project name or its chevron to expand or collapse the session

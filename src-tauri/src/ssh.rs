@@ -1,9 +1,10 @@
-use crate::models::{RemoteDirectoryEntry, RemoteDirectoryListing};
+use crate::models::{RemoteDirectoryEntry, RemoteDirectoryListing, SshDestination};
 use crate::telemetry::{trace_context::TraceContext, Telemetry};
 use std::{
     env,
     ffi::OsStr,
     io::Read,
+    net::Ipv6Addr,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     sync::mpsc,
@@ -47,12 +48,7 @@ pub struct SshConnection {
 impl SshConnection {
     pub fn parse(connection_string: &str) -> Result<Self, String> {
         let connection_string = connection_string.trim();
-        if connection_string.is_empty() {
-            return Err("Enter an SSH connection string.".into());
-        }
-
-        let mut words = shell_words::split(connection_string)
-            .map_err(|error| format!("Could not parse the SSH connection string: {error}"))?;
+        let mut words = ssh_words(connection_string)?;
         if words.is_empty() {
             return Err("Enter an SSH connection string.".into());
         }
@@ -119,6 +115,70 @@ impl SshConnection {
             .arg(remote_command);
         command
     }
+}
+
+fn ssh_words(connection_string: &str) -> Result<Vec<String>, String> {
+    shell_words::split(connection_string)
+        .map_err(|error| format!("Could not parse the SSH connection string: {error}"))
+}
+
+pub(crate) fn reusable_destination(connection_string: &str) -> Option<SshDestination> {
+    let mut words = ssh_words(connection_string.trim()).ok()?;
+    let first = words.first()?;
+    if first == "ssh" {
+        words.remove(0);
+    } else if Path::new(first).file_name() == Some(OsStr::new("ssh")) {
+        return None;
+    }
+    // The normalizer discards the option terminator; recents only accept plain inputs and -p.
+    if words.iter().any(|word| word == "--") {
+        return None;
+    }
+    let arguments = normalize_ssh_arguments(words).ok()?;
+    let (destination, options) = arguments.split_last()?;
+    let port = match options {
+        [] => None,
+        [flag, value] if flag == "-p" => Some(reusable_port(value)?),
+        [flag] => Some(reusable_port(flag.strip_prefix("-p")?)?),
+        _ => return None,
+    };
+
+    let (user, host) = match destination.split_once('@') {
+        Some((user, host)) if plain_ssh_label(user) => (Some(user.to_string()), host),
+        Some(_) => return None,
+        None => (None, destination.as_str()),
+    };
+    if host.starts_with('-') || !(plain_ssh_label(host) || ipv6_ssh_host(host)) {
+        return None;
+    }
+    Some(SshDestination {
+        host: host.to_string(),
+        user,
+        port,
+    })
+}
+
+fn reusable_port(value: &str) -> Option<u16> {
+    if !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    value.parse::<u16>().ok().filter(|port| *port != 0)
+}
+
+fn plain_ssh_label(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+fn ipv6_ssh_host(host: &str) -> bool {
+    let address = match host.split_once('%') {
+        Some((address, scope)) if plain_ssh_label(scope) => address,
+        Some(_) => return false,
+        None => host,
+    };
+    address.parse::<Ipv6Addr>().is_ok()
 }
 
 fn normalize_ssh_arguments(words: Vec<String>) -> Result<Vec<String>, String> {
@@ -433,6 +493,101 @@ mod tests {
         let (output, overflow) = read_bounded(&b"0123456789"[..], 4).expect("bounded output");
         assert_eq!(output, b"0123");
         assert!(overflow);
+    }
+
+    #[test]
+    fn reusable_destinations_keep_alias_user_and_explicit_port() {
+        let alias = SshDestination {
+            host: "Build_Box.internal".into(),
+            user: None,
+            port: None,
+        };
+        assert_eq!(
+            reusable_destination(" ssh 'Build_Box.internal' "),
+            Some(alias.clone())
+        );
+        assert_eq!(
+            reusable_destination("Build_Box.internal"),
+            Some(alias.clone())
+        );
+        let account = SshDestination {
+            user: Some("dev.ops".into()),
+            ..alias
+        };
+        assert_eq!(
+            reusable_destination("dev.ops@Build_Box.internal"),
+            Some(account.clone())
+        );
+        let explicit = SshDestination {
+            port: Some(22),
+            ..account.clone()
+        };
+        assert_ne!(explicit, account);
+        for input in [
+            "ssh -p 22 dev.ops@Build_Box.internal",
+            "ssh -p22 dev.ops@Build_Box.internal",
+            "ssh dev.ops@Build_Box.internal -p22",
+            "dev.ops@Build_Box.internal -p 0022",
+        ] {
+            assert_eq!(
+                reusable_destination(input),
+                Some(explicit.clone()),
+                "{input}"
+            );
+        }
+        assert_eq!(reusable_destination("ssh ssh").unwrap().host, "ssh");
+        assert_eq!(
+            reusable_destination("ssh -p65535 root@2001:db8::1"),
+            Some(SshDestination {
+                host: "2001:db8::1".into(),
+                user: Some("root".into()),
+                port: Some(65535),
+            }),
+        );
+        assert_eq!(
+            reusable_destination("fe80::1%en0").unwrap().host,
+            "fe80::1%en0"
+        );
+    }
+
+    #[test]
+    fn reusable_destinations_skip_advanced_and_ambiguous_inputs() {
+        for input in [
+            "",
+            "ssh",
+            "ssh 'host",
+            "ssh host uptime",
+            "ssh host another-host",
+            "/usr/bin/ssh host",
+            "./ssh host",
+            "ssh -i key host",
+            "ssh -J jump host",
+            "ssh -o Port=22 host",
+            "ssh -l dev host",
+            "ssh -v host",
+            "ssh -vp22 host",
+            "ssh -- host",
+            "ssh -- -host",
+            "ssh -p host",
+            "ssh host -p",
+            "ssh host -p0",
+            "ssh host -p65536",
+            "ssh host -p=22",
+            "ssh host -p+22",
+            "ssh -p22 host -p23",
+            "ssh://dev@host:22",
+            "host:22",
+            "[2001:db8::1]",
+            "dev@-host",
+            "dev@@host",
+            "@host",
+            "dev@",
+            "'host name'",
+            "'$(hostname)'",
+            "'dev;other'@host",
+        ] {
+            assert_eq!(reusable_destination(input), None, "{input}");
+        }
     }
 
     #[test]

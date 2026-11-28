@@ -6,7 +6,7 @@
         ? 'SSH Connection'
         : 'Choose Remote Working Directory'
     "
-    :width="step === 'connection' ? 'sm' : 'md'"
+    width="md"
     :busy="connecting"
     :return-focus="returnFocus"
   >
@@ -45,6 +45,49 @@
         role="alert"
       >
         {{ connectionError }}
+      </p>
+      <ul
+        v-if="mode === 'add' && recentDestinations.length"
+        ref="recentList"
+        class="remote-recent-list"
+        role="list"
+        aria-label="Recent SSH destinations"
+        :aria-busy="forgetPending || undefined"
+      >
+        <li
+          v-for="destination in recentDestinations"
+          :key="destinationLabel(destination)"
+          class="remote-recent-row"
+        >
+          <button
+            type="button"
+            class="remote-recent-destination ui-pick-row"
+            :aria-disabled="recentActionsDisabled || undefined"
+            :title="destinationLabel(destination)"
+            @click="() => selectDestination(destination)"
+          >
+            {{ destinationLabel(destination) }}
+          </button>
+          <UiIconButton
+            class="remote-recent-forget"
+            size="lg"
+            :label="`Forget ${destinationLabel(destination)}`"
+            :title="`Forget ${destinationLabel(destination)}`"
+            :aria-disabled="recentActionsDisabled || undefined"
+            @click="
+              (event: MouseEvent) => forgetDestination(destination, event)
+            "
+          >
+            <UiIcon name="cross" />
+          </UiIconButton>
+        </li>
+      </ul>
+      <p
+        v-if="mode === 'add' && forgetError"
+        class="remote-dialog-error"
+        role="alert"
+      >
+        {{ forgetError }}
       </p>
     </form>
 
@@ -113,12 +156,15 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 
+import type { SshDestination } from '../composables/state';
 import textFieldItems from '../lib/text-menu';
 
 import UiContextMenu from './ui/UiContextMenu.vue';
 import UiDialog from './ui/UiDialog.vue';
+import UiIcon from './ui/UiIcon.vue';
+import UiIconButton from './ui/UiIconButton.vue';
 import UiInput from './ui/UiInput.vue';
 import UiListOption from './ui/UiListOption.vue';
 
@@ -135,22 +181,47 @@ const connectionString = defineModel<string>('connectionString', {
 const directoryFilter = defineModel<string>('directoryFilter', { default: '' });
 const selectedIndex = defineModel<number>('selectedIndex', { default: 0 });
 
-const props = defineProps<{
-  step: 'connection' | 'directory';
-  mode: 'add' | 'retry';
-  connectionError: string;
-  connecting: boolean;
-  directoryOptions: RemoteDirectoryOption[];
-  returnFocus?: () => HTMLElement | undefined;
-}>();
+const props = withDefaults(
+  defineProps<{
+    step: 'connection' | 'directory';
+    mode: 'add' | 'retry';
+    connectionError: string;
+    connecting: boolean;
+    directoryOptions: RemoteDirectoryOption[];
+    recentDestinations?: SshDestination[];
+    forgetPending?: boolean;
+    forgetError?: string;
+    returnFocus?: () => HTMLElement | undefined;
+  }>(),
+  {
+    recentDestinations: () => [],
+    forgetError: '',
+    returnFocus: undefined,
+  },
+);
 
 const emit = defineEmits<{
   'submit-connection': [];
   'choose-directory': [path: string, kind: 'back' | 'select' | 'forward'];
+  'select-destination': [destination: SshDestination];
+  'forget-destination': [destination: SshDestination];
 }>();
 
 const connectionInput = ref<InstanceType<typeof UiInput>>();
 const directoryFilterInput = ref<InstanceType<typeof UiInput>>();
+const recentList = ref<HTMLUListElement>();
+const recentActionsDisabled = computed(
+  () => props.connecting || props.forgetPending,
+);
+let forgetOrigin: HTMLButtonElement | undefined;
+
+watch(
+  () => [open.value, props.mode, props.step],
+  () => {
+    forgetOrigin = undefined;
+  },
+  { flush: 'sync' },
+);
 
 watch(
   () => [open.value, props.step] as const,
@@ -167,8 +238,56 @@ watch(directoryFilter, () => {
   selectedIndex.value = 0;
 });
 
+watch(
+  () => props.recentDestinations,
+  (destinations, previous) => {
+    const origin = forgetOrigin;
+    forgetOrigin = undefined;
+    if (!origin || origin !== document.activeElement) return;
+    const buttons = recentList.value?.querySelectorAll<HTMLButtonElement>(
+      '.remote-recent-forget',
+    );
+    if (!buttons) return;
+    const index = Array.from(buttons).indexOf(origin);
+    const removed = previous[index];
+    const remaining = new Set(destinations.map(destinationLabel));
+    if (!removed || remaining.has(destinationLabel(removed))) return;
+
+    // Move focus before the dialog's focus trap sees the active row disappear.
+    let next: HTMLButtonElement | undefined;
+    for (const [i, destination] of previous.entries()) {
+      if (!remaining.has(destinationLabel(destination))) continue;
+      next = buttons[i];
+      if (i > index) break;
+    }
+    (next ?? connectionInput.value?.input)?.focus();
+  },
+);
+
+function destinationLabel({ host, user, port }: SshDestination): string {
+  return `${user ? `${user}@` : ''}${host}${port === undefined ? '' : ` -p ${port}`}`;
+}
+
+function selectDestination(destination: SshDestination): void {
+  if (!recentActionsDisabled.value) emit('select-destination', destination);
+}
+
+function forgetDestination(
+  destination: SshDestination,
+  event: MouseEvent,
+): void {
+  if (recentActionsDisabled.value) return;
+  if (event.currentTarget instanceof HTMLButtonElement) {
+    forgetOrigin = event.currentTarget;
+    forgetOrigin.focus({ preventScroll: true });
+  }
+  emit('forget-destination', destination);
+}
+
 function submitConnection(): void {
-  emit('submit-connection');
+  if (!props.connecting && !(props.mode === 'add' && props.forgetPending)) {
+    emit('submit-connection');
+  }
 }
 
 function highlight(index: number): void {
@@ -191,8 +310,37 @@ function handleConnectionKeydown(event: KeyboardEvent): void {
     !event.isComposing
   ) {
     event.preventDefault();
-    if (!props.connecting) submitConnection();
+    if (event.target === connectionInput.value?.input) submitConnection();
   }
+  handleRecentKeys(event);
+}
+
+function handleRecentKeys(event: KeyboardEvent): void {
+  if (
+    !recentList.value ||
+    recentActionsDisabled.value ||
+    event.isComposing ||
+    event.altKey ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')
+  ) {
+    return;
+  }
+  const input = connectionInput.value?.input;
+  const rows = Array.from(
+    recentList.value.querySelectorAll<HTMLButtonElement>(
+      '.remote-recent-destination',
+    ),
+  );
+  const index = rows.findIndex((row) => row === event.target);
+  if (index < 0 && event.target !== input) return;
+  const next = event.key === 'ArrowDown' ? index + 1 : index - 1;
+  if (next < -1) return;
+  event.preventDefault();
+  if (next === -1) input?.focus();
+  else rows[next]?.focus();
 }
 
 function handleDirectorySurfaceKeydown(event: KeyboardEvent): void {
@@ -272,6 +420,64 @@ function scrollSelected(): void {
   color: var(--danger);
   font-size: var(--text-xs);
   line-height: var(--leading-ui);
+}
+
+.remote-recent-list {
+  max-height: min(160px, 28vh);
+  margin: 0;
+  padding: 1px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.remote-recent-row {
+  display: flex;
+  border-radius: var(--radius-md);
+  gap: 4px;
+}
+
+.remote-recent-row:hover {
+  background: var(--hover);
+}
+
+.remote-recent-row:has(:focus-visible) {
+  background: var(--selected);
+}
+
+.remote-recent-destination {
+  flex: 1;
+  min-width: 0;
+  height: var(--control-lg);
+  padding: 0 8px;
+  overflow: hidden;
+  background: transparent;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--text-sm);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remote-recent-forget :deep(svg) {
+  font-size: 11px;
+}
+
+.remote-recent-destination:is(:hover, :focus-visible) {
+  background: transparent;
+}
+
+.remote-recent-destination:focus-visible {
+  outline: none;
+}
+
+.remote-recent-forget:focus-visible {
+  box-shadow: none;
+}
+
+.remote-recent-row [aria-disabled='true'] {
+  opacity: 0.5;
 }
 
 .remote-directory-list {

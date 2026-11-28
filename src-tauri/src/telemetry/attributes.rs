@@ -147,6 +147,7 @@ pub const TAURI_INVOKE_COMMANDS: &[&str] = &[
     "disconnect_cloud_connection",
     "import_project",
     "import_remote_project",
+    "forget_ssh_destination",
     "rename_project",
     "remove_project",
     "set_active_project",

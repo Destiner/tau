@@ -7,8 +7,11 @@ import {
   presentRemoteConnectionError,
   state,
   type ProjectSummary,
+  type RemoteDirectoryListing,
+  type RemoteProjectImport,
   type SessionController,
   type SessionSummary,
+  type SshDestination,
   type WorkspaceSnapshot,
 } from '../state';
 
@@ -81,6 +84,9 @@ function workspace(projects: ProjectSummary[]): WorkspaceSnapshot {
   };
 }
 
+const savedDestination = { host: 'example', user: 'dev', port: 2222 };
+const otherDestination = { host: 'other' };
+
 function resetState(projects: ProjectSummary[] = []): void {
   state.workspace = workspace(projects);
   state.controllers.splice(0);
@@ -97,6 +103,8 @@ function resetState(projects: ProjectSummary[] = []): void {
   state.remoteConnectionString = '';
   state.remoteConnectionError = '';
   state.remoteConnecting = false;
+  state.remoteForgetPending = false;
+  state.remoteForgetError = '';
   state.remoteDirectoryHost = '';
   state.remoteWorkingDirectory = '';
   state.remoteDirectoryHistory = [];
@@ -131,6 +139,170 @@ afterEach(() => {
   tau = undefined;
 });
 
+describe('recent SSH destinations', () => {
+  it('does not add history after a first manual connection is cancelled', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce({
+      connectionString: 'new@alias',
+      workingDirectory: '/work',
+      host: 'alias',
+      directories: [],
+    });
+    tau = useTau();
+    tau.openRemoteProjectDialog();
+    state.remoteConnectionString = 'new@alias';
+    await tau.submitRemoteConnection();
+    expect(state.remoteDialogStep).toBe('directory');
+    tau.closeRemoteProjectDialog();
+    tau.openRemoteProjectDialog();
+    expect(state.workspace?.recentSshDestinations ?? []).toEqual([]);
+  });
+
+  it.each([
+    [savedDestination, 'ssh -p 2222 dev@example'],
+    [otherDestination, 'other'],
+    [{ host: 'ssh' }, 'ssh ssh'],
+  ] as const)(
+    'probes %j without recording or reordering on browse or cancel',
+    async (destination, connectionString) => {
+      const recent = [otherDestination, savedDestination];
+      if (destination.host === 'ssh') recent.push(destination);
+      state.workspace!.recentSshDestinations = recent;
+      vi.mocked(invoke).mockImplementation(async (command) => ({
+        connectionString,
+        workingDirectory:
+          command === 'probe_remote_project' ? '/work' : '/work/next',
+        host: destination.host,
+        directories: [],
+      }));
+      tau = useTau();
+      tau.openRemoteProjectDialog();
+      expect(state.remoteConnectionString).toBe('');
+
+      const probing = tau.selectRecentSshDestination(destination);
+      await tau.selectRecentSshDestination(otherDestination);
+      await probing;
+      expect(invoke).toHaveBeenCalledExactlyOnceWith('probe_remote_project', {
+        connectionString,
+        telemetryContext: undefined,
+      });
+      expect(state.remoteDialogStep).toBe('directory');
+      expect(state.workspace?.recentSshDestinations).toEqual(recent);
+
+      await tau.chooseRemoteDirectory('/work/next', 'forward');
+      expect(state.remoteWorkingDirectory).toBe('/work/next');
+      expect(state.workspace?.recentSshDestinations).toEqual(recent);
+      tau.closeRemoteProjectDialog();
+      tau.openRemoteProjectDialog();
+      expect(state.remoteConnectionString).toBe('');
+      expect(state.workspace?.recentSshDestinations).toEqual(recent);
+      expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
+        'probe_remote_project',
+        'list_remote_directories',
+      ]);
+    },
+  );
+
+  it('keeps a destination and input on forget failure and removes only the suggestion on retry', async () => {
+    const remote = project('ssh:example:/work', [], {
+      connectionString: 'dev@example',
+    });
+    resetState([remote]);
+    state.workspace!.recentSshDestinations = [savedDestination];
+    const failed = deferred<SshDestination[]>();
+    vi.mocked(invoke)
+      .mockReturnValueOnce(failed.promise)
+      .mockResolvedValueOnce([]);
+    tau = useTau();
+    tau.openRemoteProjectDialog();
+    state.remoteConnectionString = 'manual@alias';
+
+    const forgetting = tau.forgetRecentSshDestination(savedDestination);
+    expect(state.remoteForgetPending).toBe(true);
+    expect(state.workspace?.recentSshDestinations).toEqual([savedDestination]);
+    await tau.forgetRecentSshDestination(savedDestination);
+    await tau.selectRecentSshDestination(savedDestination);
+    await tau.submitRemoteConnection();
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('forget_ssh_destination', {
+      destination: savedDestination,
+      telemetryContext: undefined,
+    });
+    failed.reject(new Error('private native error'));
+    await forgetting;
+    expect(state.remoteForgetPending).toBe(false);
+    expect(state.remoteForgetError).toBe(
+      'Could not forget this SSH destination. Try again.',
+    );
+    expect(state.workspace?.recentSshDestinations).toEqual([savedDestination]);
+
+    await tau.forgetRecentSshDestination(savedDestination);
+    expect(state.workspace?.recentSshDestinations).toEqual([]);
+    expect(state.workspace?.projects).toEqual([remote]);
+    expect(state.remoteForgetPending).toBe(false);
+    expect(state.remoteForgetError).toBe('');
+    expect(state.remoteConnectionString).toBe('manual@alias');
+    expect(state.remoteDialogStep).toBe('connection');
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([true, false])(
+    'reconciles a late forget without taking over a replacement dialog (success: %s)',
+    async (success) => {
+      state.workspace!.recentSshDestinations = [savedDestination];
+      const pending = deferred<SshDestination[]>();
+      vi.mocked(invoke).mockReturnValueOnce(pending.promise);
+      tau = useTau();
+      tau.openRemoteProjectDialog();
+      const forgetting = tau.forgetRecentSshDestination(savedDestination);
+      tau.closeRemoteProjectDialog();
+      tau.openRemoteProjectDialog();
+      state.remoteConnectionString = 'replacement@alias';
+      state.remoteConnectionError = 'Replacement dialog status';
+      expect(state.remoteForgetPending).toBe(true);
+
+      if (success) pending.resolve([]);
+      else pending.reject(new Error('stale failure'));
+      await forgetting;
+
+      expect(state.workspace?.recentSshDestinations).toEqual(
+        success ? [] : [savedDestination],
+      );
+      expect(state.remoteForgetPending).toBe(false);
+      expect(state.remoteForgetError).toBe('');
+      expect(state.remoteDialogOpen).toBe(true);
+      expect(state.remoteDialogStep).toBe('connection');
+      expect(state.remoteConnectionString).toBe('replacement@alias');
+      expect(state.remoteConnectionError).toBe('Replacement dialog status');
+    },
+  );
+
+  it('does not allow recent actions or change the list during runtime retry', async () => {
+    const remote = project('ssh:example:/work', [session('remote')], {
+      connectionString: 'dev@example',
+    });
+    resetState([remote]);
+    state.workspace!.recentSshDestinations = [
+      otherDestination,
+      savedDestination,
+    ];
+    tau = useTau();
+    const controller = createController(remote, remote.sessions[0]!, 'retry');
+    state.activeControllerKey = controller.key;
+    presentRemoteConnectionError(controller, 'Runtime retry');
+    expect(state.remoteDialogMode).toBe('retry');
+
+    await tau.forgetRecentSshDestination(savedDestination);
+    await tau.selectRecentSshDestination(savedDestination);
+    expect(invoke).not.toHaveBeenCalled();
+    expect(state.remoteConnectionString).toBe('dev@example');
+    await tau.submitRemoteConnection();
+    expect(invoke).toHaveBeenCalledWith('start_pi_remote', expect.anything());
+    expect(state.workspace?.recentSshDestinations).toEqual([
+      otherDestination,
+      savedDestination,
+    ]);
+  });
+});
+
 describe('project opening', () => {
   it('opens a local project from another active project and restores its controller and draft on return', async () => {
     const sourceSession = session('source', { selected: true });
@@ -140,6 +312,10 @@ describe('project opening', () => {
       collapsed: true,
     });
     resetState([source, existing]);
+    state.workspace!.recentSshDestinations = [
+      otherDestination,
+      savedDestination,
+    ];
     vi.mocked(open).mockResolvedValue(existing.path);
     vi.mocked(invoke).mockImplementation(async (command) => {
       if (command === 'import_project') return { ...existing, selected: true };
@@ -162,6 +338,10 @@ describe('project opening', () => {
 
     await tau.addLocalProject();
     await expectActive(existing.path, existingSession.id);
+    expect(state.workspace?.recentSshDestinations).toEqual([
+      otherDestination,
+      savedDestination,
+    ]);
     expect(existing.collapsed).toBe(false);
     const startsBeforeReturn = vi
       .mocked(invoke)
@@ -189,9 +369,16 @@ describe('project opening', () => {
       connectionString: 'dev@example',
     });
     resetState([source, existing]);
+    state.workspace!.recentSshDestinations = [
+      otherDestination,
+      savedDestination,
+    ];
     vi.mocked(invoke).mockImplementation(async (command) => {
       if (command === 'import_remote_project')
-        return { ...existing, selected: true };
+        return {
+          project: { ...existing, selected: true },
+          recentSshDestinations: [savedDestination, otherDestination],
+        };
       if (command === 'start_pi' || command === 'start_pi_remote') return 1;
       return undefined;
     });
@@ -211,6 +398,10 @@ describe('project opening', () => {
     await tau.chooseRemoteDirectory('/work', 'select');
     await expectActive(existing.path, selected.id);
     expect(state.remoteDialogOpen).toBe(false);
+    expect(state.workspace?.recentSshDestinations).toEqual([
+      savedDestination,
+      otherDestination,
+    ]);
 
     await tau.selectSession(source, sourceSession);
     expect(tau.activeController.value).toBe(controller);
@@ -302,7 +493,8 @@ describe('project opening', () => {
       connectionString: 'dev@example',
     });
     vi.mocked(invoke).mockImplementation(async (command) => {
-      if (command === 'import_remote_project') return remote;
+      if (command === 'import_remote_project')
+        return { project: remote, recentSshDestinations: [savedDestination] };
       if (command === 'start_pi_remote') return 1;
       return undefined;
     });
@@ -439,6 +631,10 @@ describe('project opening', () => {
       session('kept', { selected: true }),
     ]);
     resetState([existing]);
+    state.workspace!.recentSshDestinations = [
+      otherDestination,
+      savedDestination,
+    ];
     tau = useTau();
 
     await tau.addLocalProject();
@@ -468,6 +664,10 @@ describe('project opening', () => {
     await tau.chooseRemoteDirectory('/remote', 'select');
     expect(state.remoteDialogOpen).toBe(true);
     expect(state.remoteConnectionError).toContain('could not be added');
+    expect(state.workspace?.recentSshDestinations).toEqual([
+      otherDestination,
+      savedDestination,
+    ]);
   });
 
   it('does not let a deferred local chooser or import override later navigation', async () => {
@@ -564,12 +764,9 @@ describe('project opening', () => {
       },
     );
     resetState([first]);
-    const imports = [
-      deferred<ProjectSummary>(),
-      deferred<ProjectSummary>(),
-      deferred<ProjectSummary>(),
-      deferred<ProjectSummary>(),
-    ];
+    const imports = Array.from({ length: 4 }, () =>
+      deferred<RemoteProjectImport>(),
+    );
     let importIndex = 0;
     vi.mocked(invoke).mockImplementation(async (command) => {
       if (command === 'import_remote_project')
@@ -591,9 +788,15 @@ describe('project opening', () => {
       const choosing = tau.chooseRemoteDirectory('/work', 'select');
       await vi.waitFor(() => expect(importIndex).toBe(index + 1));
       supersede();
-      imports[index]!.resolve(remote);
+      imports[index]!.resolve({
+        project: remote,
+        recentSshDestinations: [savedDestination],
+      });
       await choosing;
       expect(state.workspace?.projects).toEqual([first]);
+      expect(state.workspace?.recentSshDestinations).toEqual([
+        savedDestination,
+      ]);
     }
   });
 
@@ -605,7 +808,7 @@ describe('project opening', () => {
       connectionString: 'me@host',
     });
     resetState([source]);
-    const imported = deferred<ProjectSummary>();
+    const imported = deferred<RemoteProjectImport>();
     vi.mocked(invoke).mockImplementation(async (command) => {
       if (command === 'import_remote_project') return imported.promise;
       return undefined;
@@ -624,10 +827,14 @@ describe('project opening', () => {
 
     tau.requestProjectRemoval(source);
     const removing = tau.confirmProjectRemoval();
-    imported.resolve(remote);
+    imported.resolve({
+      project: remote,
+      recentSshDestinations: [savedDestination],
+    });
     await Promise.all([choosing, removing]);
 
     expect(state.workspace?.projects).toEqual([]);
+    expect(state.workspace?.recentSshDestinations).toEqual([savedDestination]);
     expect(state.activeProjectPath).toBe('');
   });
 
@@ -660,15 +867,7 @@ describe('project opening', () => {
         connectionString: 'stable@remote',
       });
       resetState([remote]);
-      const pending = deferred<
-        | ProjectSummary
-        | {
-            connectionString: string;
-            workingDirectory: string;
-            host: string;
-            directories: [];
-          }
-      >();
+      const pending = deferred<RemoteProjectImport | RemoteDirectoryListing>();
       vi.mocked(invoke).mockImplementation(async (command) => {
         if (
           command === 'probe_remote_project' ||
@@ -706,7 +905,7 @@ describe('project opening', () => {
       presentRemoteConnectionError(controller, 'Runtime retry');
       pending.resolve(
         operation === 'import'
-          ? remote
+          ? { project: remote, recentSshDestinations: [savedDestination] }
           : {
               connectionString: 'stale@host',
               workingDirectory: '/stale',
