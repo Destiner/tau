@@ -1,6 +1,6 @@
 # Reproduction
 
-Use deterministic browser fixtures for UI/protocol regressions, fake stdio for native process behavior, and the explicit real-Pi canary for installed-Pi contract drift. See [CI and test execution](ci-testing.md) for test strategy and [development storage](development-storage.md) for native profiles and browser sandbox behavior.
+Use deterministic browser fixtures for UI/protocol regressions, fake stdio for native process behavior, and explicit real-Pi canaries for installed-Pi contract drift. See [CI and test execution](ci-testing.md) for test strategy and [development storage](development-storage.md) for native profiles and browser sandbox behavior.
 
 ## Scenarios
 
@@ -78,3 +78,28 @@ menu and by typing, and confirm changes without a process/session restart. Check
 conversation/reader position, another session, failed hooks, and reload-time
 extension input. A real SSH host requires separate approved end-to-end validation;
 local execution of generated SSH bootstrap scripts is not equivalent.
+
+### Opt-in project trust canary
+
+```sh
+bun run test:pi-trust-contract
+```
+
+Requires a supported Node-based Pi installation on `PATH` (or selected with
+`TAU_PI_PATH`) and `node` on `PATH`. The canary uses an offline Pi process with
+disposable HOME, agent and session directories, no provider credentials or
+tools, and one inert project-local skill. It checks the private report from Tau's
+bundled extension and uses the native trust helper to inspect, grant, and read
+back trust in the isolated Pi store. The initial process reports untrusted and
+omits the skill from `get_commands`; it stays that way after saving and after
+an explicit private reload. A fresh process reports trusted and lists the skill.
+The skill is never invoked; only the known private reload command is executed.
+No model is called, and no real Pi settings or trust store are modified.
+
+This is a local compatibility check, not part of the default suites and not an
+SSH or native UI test. For manual UI verification, use a disposable project and
+agent directory: cancel without saving, then trust the folder and confirm that
+the same session stays open with its shield. Reopen the dialog to check the saved
+decision, then start a fresh Pi process to check skill discovery. Verify a live
+SSH target separately using disposable paths and an isolated agent directory on
+the remote account.

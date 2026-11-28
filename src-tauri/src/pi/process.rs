@@ -21,6 +21,7 @@ pub(super) struct PiProcess {
     pub(super) child: Arc<Mutex<Child>>,
     pub(super) writer: PiWriter,
     pub(super) usable: Arc<AtomicBool>,
+    pub(super) trust: Option<super::project_trust::TrustLaunch>,
 }
 
 impl PiProcess {

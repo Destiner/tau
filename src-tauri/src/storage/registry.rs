@@ -77,11 +77,17 @@ pub(super) fn project_registry_path() -> Result<PathBuf, String> {
     Ok(profile::current()?.data_dir().join("projects.json"))
 }
 
-pub(crate) fn remote_project(project_path: &str) -> Result<RemoteProjectRecord, String> {
-    load_project_registry()?
+pub(crate) fn registered_project(
+    project_path: &str,
+) -> Result<Option<crate::models::ProjectRecord>, String> {
+    Ok(load_project_registry()?
         .projects
         .into_iter()
-        .find(|project| project.path == project_path)
+        .find(|project| project.path == project_path))
+}
+
+pub(crate) fn remote_project(project_path: &str) -> Result<RemoteProjectRecord, String> {
+    registered_project(project_path)?
         .and_then(|project| project.remote)
         .ok_or_else(|| "The remote project is no longer available.".to_string())
 }

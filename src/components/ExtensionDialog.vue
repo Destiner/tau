@@ -43,7 +43,7 @@
         :aria-selected="index === selectedIndex"
         :disabled="submitting || disabled"
         @focus="() => (selectedIndex = index)"
-        @mouseenter="(event) => hoverOption(event, index)"
+        @mouseenter="(event: MouseEvent) => hoverOption(event, index)"
         @click="() => chooseOption(option)"
       >
         {{ option }}

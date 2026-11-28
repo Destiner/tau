@@ -46,6 +46,11 @@ import { stringValue } from '../transcript';
 import { discardControllerDialogs } from './extensions';
 import { setHistoryLoading } from './history';
 import {
+  adoptProjectTrustGeneration,
+  projectTrustRevision,
+  retireProjectTrustGeneration,
+} from './project-trust';
+import {
   settleInterruptedSubmittedPrompt,
   cancelPendingPrompt,
 } from './prompts';
@@ -229,6 +234,10 @@ async function startController(
   parentContext?: TraceContext,
 ): Promise<void> {
   if (controller.starting || controller.disposed) return;
+  retireProjectTrustGeneration(controller, controller.generation);
+  controller.projectTrustSuspended = false;
+  // A grant confirmed while this launch is in flight may be too late for Pi.
+  const trustRevisionAtLaunch = projectTrustRevision();
   clearReload(controller, true);
   controller.reloadFence = undefined;
   cancelSetup(controller);
@@ -320,6 +329,7 @@ async function startController(
       );
     }
     startedGeneration = controller.generation;
+    adoptProjectTrustGeneration(controller, startedGeneration);
     if (
       controller.disposed ||
       (project.connectionString && !controller.connectingRemote)
@@ -327,6 +337,10 @@ async function startController(
       await stopControllerProcess(controller, parentContext, false);
       return;
     }
+    // Only commands from the new generation can inherit its trust revision.
+    controller.commands = [];
+    controller.commandsLoaded = false;
+    controller.commandCatalogueTrustRevision = trustRevisionAtLaunch;
     await requestBootstrap(controller, parentContext);
   } catch {
     if (
@@ -335,6 +349,10 @@ async function startController(
         controller.generation !== startedGeneration)
     )
       return;
+    retireProjectTrustGeneration(
+      controller,
+      controller.projectTrust?.generation ?? controller.generation,
+    );
     clearRemoteConnectionWatch(controller);
     setControllerLifecycle(
       controller,
@@ -1521,6 +1539,11 @@ async function stopControllerProcess(
 ): Promise<void> {
   if (!controller.generation && !controller.starting) return;
   const generation = controller.generation;
+  controller.projectTrustSuspended = true;
+  retireProjectTrustGeneration(
+    controller,
+    controller.projectTrust?.generation ?? generation,
+  );
   const stoppedSessionId = controller.sessionId;
   try {
     await invokeTraced(

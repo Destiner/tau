@@ -95,7 +95,11 @@ fn provision_inner(data_dir: &Path) -> std::io::Result<PathBuf> {
 }
 
 // The login shell only interprets a quoted /bin/sh invocation; RPC stdin is never used.
-pub fn remote_bootstrap(working_directory: &str, session_path: Option<&str>) -> String {
+pub fn remote_bootstrap(
+    working_directory: &str,
+    session_path: Option<&str>,
+    nonce: &str,
+) -> String {
     let script = format!(
         r#"set -eu
 umask 077
@@ -121,15 +125,19 @@ chmod 400 "$helper" || fail
 rm -f "$staging"
 trap - EXIT HUP INT TERM
 cd "$2" || exit 1
-shift 2
+TAU_PROJECT_TRUST_NONCE=$3
+TAU_PROJECT_TRUST_CLI=$(command -v pi) || TAU_PROJECT_TRUST_CLI=
+export TAU_PROJECT_TRUST_NONCE TAU_PROJECT_TRUST_CLI
+shift 3
 exec pi --mode rpc --extension "$helper" "$@""#,
         revision = revision(),
     );
     let mut command = format!(
-        "exec /bin/sh -c {} tau {} {}",
+        "exec /bin/sh -c {} tau {} {} {}",
         shell_words::quote(&script),
         shell_words::quote(SOURCE),
         shell_words::quote(working_directory),
+        shell_words::quote(nonce),
     );
     if let Some(path) = session_path {
         command.push_str(" --session ");
@@ -196,6 +204,7 @@ mod tests {
                 &remote_bootstrap(
                     project.to_str().unwrap(),
                     Some("/sessions/a '; $(touch BAD).jsonl"),
+                    "",
                 ),
             ])
             .env("HOME", home)
@@ -270,7 +279,7 @@ mod tests {
         let output = std::process::Command::new(shell)
             .args([
                 "-c",
-                &crate::ssh::remote_pi_command(project.to_str().unwrap(), None),
+                &crate::ssh::remote_pi_command(project.to_str().unwrap(), None, ""),
             ])
             .env("SHELL", shell)
             .env("HOME", home.path())

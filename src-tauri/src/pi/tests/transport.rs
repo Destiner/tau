@@ -137,6 +137,42 @@ fn fake_pi_malformed_stdout_is_dropped_and_lifecycle_is_cleaned_up() {
 }
 
 #[test]
+fn private_startup_evidence_is_not_forwarded_as_a_pi_event() {
+    let _lock = ENVIRONMENT_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let fixture = NativePiFixture::new(None);
+    let (app, events) = fixture.app_and_events();
+    let handle = app.handle().clone();
+    let state = handle.state::<PiState>();
+    let telemetry = handle.state::<Telemetry>();
+    claim_for_test(&state, "owner-a");
+    let mut command = Command::new("/bin/sh");
+    command.args(["-c", r#"
+printf '__TAU_PI_TRUST__{"nonce":"%s","cwd":"/workspace","sessionId":"test","sessionFile":null,"trusted":false,"identity":null}\n' "$TAU_PROJECT_TRUST_NONCE"
+printf '__TAU_PI_TRUST__stderr-copy\n' >&2
+printf '{"type":"response","id":"after-evidence"}\n'
+"#]);
+    let trust =
+        project_trust::TrustLaunch::local(&mut command, Path::new("/pi"), fixture.project_string());
+    let generation = spawn_command(
+        handle.clone(),
+        &state,
+        &telemetry,
+        None,
+        "owner-a".into(),
+        "private-frame".into(),
+        command,
+        Some(trust),
+    )
+    .unwrap();
+    expect_outer_event(&events, "started", generation);
+    expect_rpc(&events, generation, "response", Some("after-evidence"));
+    expect_outer_event(&events, "exited", generation);
+    assert_eq!(events.try_recv(), Err(TryRecvError::Empty));
+}
+
+#[test]
 fn fake_pi_nonzero_exit_forwards_bounded_failure_and_cleans_up() {
     let _lock = ENVIRONMENT_LOCK
         .lock()

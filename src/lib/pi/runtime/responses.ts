@@ -70,6 +70,7 @@ import {
   releaseOrCacheRuntime,
   releaseIdleRuntimes,
 } from './lifecycle';
+import { observeProjectTrustSession } from './project-trust';
 import {
   confirmedAdmissionRequestIds,
   confirmSubmittedPrompt,
@@ -580,6 +581,7 @@ async function reduceResponse(
 
   let trailingSessionNameRefresh: boolean;
   if (command === 'get_state' && data) {
+    observeProjectTrustSession(controller, data.sessionId, data.sessionFile);
     if (resolvesSessionNameState) {
       const piSessionId = stringValue(data.sessionId);
       const piSessionPath = stringValue(data.sessionFile);

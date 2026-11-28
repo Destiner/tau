@@ -116,7 +116,11 @@ pub(super) fn spawn_stderr_reader<R: Runtime>(
                 Ok(0) => break,
                 Ok(_) => {
                     let line = line.trim_end_matches(['\n', '\r']);
-                    if line.is_empty() {
+                    if line.is_empty()
+                        || line
+                            .as_bytes()
+                            .starts_with(super::project_trust::PRIVATE_FRAME)
+                    {
                         continue;
                     }
                     let line = truncate_stderr_line(line);

@@ -16,7 +16,7 @@ This matrix describes Tau's extension compatibility with Pi 0.84.1. Queue contro
 - **`select`, `confirm`, `input`, and `editor` (supported):** Tau renders the prompt at the end of the originating session's transcript, hides that session's composer until it resolves, and routes the response back to that runtime. The nonmodal prompt takes initial focus once unless a modal or command palette is open; it does not defer a focus grab until that surface closes. Updates and response failures preserve unrelated focus. Re-enabling a prompt repairs focus lost from its own disabled control only if focus has not moved elsewhere and no modal is open. Escape cancels the prompt when one of its controls is focused. Titles and messages render as markdown, with web links and local file paths clickable.
 - **Repeated and background-session dialogs (supported):** Each session keeps its own prompt while hidden, so users can switch sessions freely. Stale requests are discarded after timeout, process exit, or generation changes.
 - **`notify` (supported):** Tau renders transcript-local notices with their project and session origin, rendered as markdown. Successful compaction clears notices from the replaced transcript; notices raised afterward retain their position among continued output.
-- **`setStatus` (deferred):** Tau ignores Pi TUI footer statuses; session activity and Tau errors use Tau's native presentation instead.
+- **`setStatus` (deferred):** Tau ignores ordinary Pi TUI footer statuses. Tau's bundled helper uses one reserved status key to report effective project trust.
 - **`setEditorText` / `set_editor_text` (supported):** Tau updates the originating session's draft even when that session is hidden.
 - **Session replacement (`newSession`, `switchSession`, `withSession`) (supported):** Tau detects replacement identity, keeps it ephemeral until an assistant `message_end` plus an identity-scoped RPC barrier proves Pi persisted it, retires legacy rows Pi never saved, and does not force UI selection to follow the runtime.
 - **Prompt reconciliation after a session replacement (supported):** Pi emits no replacement event, so Tau re-checks session identity when a command resolves, when a dialog is answered, and for a few seconds after a run settles.
@@ -47,6 +47,16 @@ Pi deliberately invalidates and recreates its extension runtime. Extension closu
 Command rejection restores the submitted text without replacing newer draft text. Extension errors remain visible even when Pi acknowledges the command as handled. A dispatch deadline (30 seconds) or resource-refresh deadline (10 seconds) means the outcome is **unknown**, not cancelled or rolled back. Supported extension input pauses that deadline. Tau keeps mutations blocked until late completion is reconciled or **Recover Pi Runtime** explicitly stops/reopens the runtime; recovery never replays the command. Read-refresh failures also require explicit recovery rather than retrying reload.
 
 Reload compatibility is exercised separately from the read-only canary with `bun run test:pi-reload-contract` (see [reproduction](reproduction.md)). The real-Pi reload check was verified on Pi 1.4.0; the older 0.84.x baseline and a real SSH host have not been empirically verified for this feature.
+
+### Project trust
+
+An amber shield means the active Pi process reports that the project is untrusted. It does not mean there is no saved grant. Tau shows no shield for trusted sessions or when trust is unknown, including sessions that are not running. Trust controls whether Pi loads project resources such as skills and executable extensions; it is not a tool sandbox.
+
+**Trust** saves a decision in Pi's own trust store for the exact canonical folder on the machine and account running Pi, including the SSH account for remote projects. Tau checks the folder, Pi installation, and agent directory (including `PI_CODING_AGENT_DIR`) against the live runtime before using that installation's public SDK. If the runtime or target changes after inspection, the confirmation cannot be reused. Pi can inherit decisions from parent folders and apply nearer decisions. Tau does not write to a parent folder or maintain its own trust store.
+
+Saving does not reload or restart Pi, interrupt work, or change any running session's effective trust. The shield remains while that process reports untrusted, even after `/reload`. A fresh process evaluates trust again and discovers its own commands; an existing grant is not a guarantee that launch or extension overrides will permit project resources.
+
+The indicator requires Pi's effective-trust extension API. Saving also requires a supported launcher and trust-store SDK; if Tau cannot establish compatibility, use interactive Pi's `/trust` on the same machine and account where available. If a save outcome is unconfirmed, recheck the saved decision before retrying. The [opt-in trust canary](reproduction.md#opt-in-project-trust-canary) verifies the local helper and runtime contract on Pi 1.5.2, not older Pi versions or a live SSH connection.
 
 ### Initial model setup recovery
 

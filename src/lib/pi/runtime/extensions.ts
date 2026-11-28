@@ -13,6 +13,7 @@ import {
 import { stringValue, type TranscriptNoticeType } from '../transcript';
 
 import { anchorFields } from './history';
+import { handleProjectTrustStatus } from './project-trust';
 import { restoreSubmittedDraft } from './prompts';
 
 function handleExtensionUIRequest(
@@ -95,7 +96,10 @@ function handleExtensionUIRequest(
     return;
   }
 
-  if (method === 'setStatus') return;
+  if (method === 'setStatus') {
+    handleProjectTrustStatus(controller, controller.generation, request);
+    return;
+  }
 
   if (method === 'set_editor_text' && typeof request.text === 'string') {
     controller.draft = request.text;

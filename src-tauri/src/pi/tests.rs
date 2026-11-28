@@ -210,5 +210,6 @@ fn scripted_process(script: &str, generation: u64) -> PiProcess {
         child: Arc::new(Mutex::new(child)),
         writer: spawn_stdin_writer(stdin).expect("stdin writer"),
         usable: Arc::new(AtomicBool::new(true)),
+        trust: None,
     }
 }
