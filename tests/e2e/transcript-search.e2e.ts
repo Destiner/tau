@@ -87,7 +87,13 @@ test('App shortcut and palette preserve the draft, selection, query and navigati
     .getByRole('button', { name: 'Previous Match', exact: true })
     .click();
   await expect(searchBar(page)).toContainText('1 / 2');
-  await page.getByRole('button', { name: 'Next Match', exact: true }).click();
+  const next = page.getByRole('button', { name: 'Next Match', exact: true });
+  const tooltip = page.locator('.ui-tooltip:visible');
+  await next.hover();
+  await expect(tooltip).toHaveCount(1);
+  await expect(tooltip).toHaveText('Next Match');
+  await next.click();
+  await expect(tooltip).toHaveCount(0);
   await expect(searchBar(page)).toContainText('2 / 2');
   await shortcut(page, 'f');
   await expect(searchInput(page)).toBeFocused();

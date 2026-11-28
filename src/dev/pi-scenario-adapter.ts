@@ -14,8 +14,20 @@ import {
   findPiScenario,
   piScenarioCatalogue,
 } from '../../tests/support/pi-scenario/catalogue';
-import { targetProjectPath } from '../../tests/support/pi-scenario/project-opening';
-import { state, type WorkspaceSnapshot } from '../composables/state';
+import {
+  manualRemoteConnection,
+  manualRemoteDirectory,
+  targetProjectPath,
+  targetRemoteChild,
+  targetRemoteConnection,
+  targetRemoteDestination,
+  targetRemoteDirectory,
+} from '../../tests/support/pi-scenario/project-opening';
+import {
+  state,
+  type SshDestination,
+  type WorkspaceSnapshot,
+} from '../composables/state';
 import type { PiBridgeEvent } from '../lib/pi/bridge';
 
 import { createCloudCommandHandler } from './cloud-fixture';
@@ -87,8 +99,8 @@ const SECOND_PROJECT_PATH = OTHER_PROJECT_PATH;
 const TARGET_PROJECT_PATH = targetProjectPath;
 const REMOTE_CONNECTION = 'ssh fixture@example';
 const REMOTE_WORKING_DIRECTORY = '/remote/tau-project';
-const TARGET_REMOTE_CONNECTION = 'ssh target@example';
-const TARGET_REMOTE_WORKING_DIRECTORY = '/remote/target-project';
+const TARGET_REMOTE_HOST = 'resolved-target';
+const TARGET_REMOTE_REPLAY = 'ssh -p 2222 target@example';
 const SESSION_ID = 'session-main';
 const SESSION_PATH = `${PROJECT_PATH}/session-main.jsonl`;
 const MAIN_SESSION = { id: SESSION_ID, path: SESSION_PATH, name: 'Main' };
@@ -286,6 +298,12 @@ const REQUIRED_NATIVE_COUNTS = {
     register_session: 7,
     set_active_session: 3,
   },
+  'saved-session-extension-select-while-typing': {
+    load_workspace: 1,
+    read_model_scope: 1,
+    register_session: 1,
+    set_active_session: 1,
+  },
   'saved-session-extension-prompt-cycling': {
     load_workspace: 1,
     read_model_scope: 2,
@@ -461,6 +479,7 @@ const REQUIRED_NATIVE_COUNTS = {
 const initialWorkspace: WorkspaceSnapshot = {
   activeProjectPath: PROJECT_PATH,
   piPath: '/fixture/bin/pi',
+  recentSshDestinations: [],
   projects: [
     {
       path: PROJECT_PATH,
@@ -496,10 +515,8 @@ function scenarioWorkspace(scenarioName: string): WorkspaceSnapshot {
     workspace.projects.push({
       path: TARGET_PROJECT_PATH,
       name: 'Target fixture',
-      workingDirectory: remote
-        ? TARGET_REMOTE_WORKING_DIRECTORY
-        : TARGET_PROJECT_PATH,
-      connectionString: remote ? TARGET_REMOTE_CONNECTION : undefined,
+      workingDirectory: remote ? targetRemoteDirectory : TARGET_PROJECT_PATH,
+      connectionString: remote ? targetRemoteConnection : undefined,
       collapsed: true,
       selected: false,
       sessions: [
@@ -641,12 +658,37 @@ function projectOpeningTarget(
   return structuredClone({ ...target, selected: true });
 }
 
+function sameDestination(
+  left: SshDestination,
+  right: Record<string, unknown>,
+): boolean {
+  return (
+    left.host === right.host &&
+    left.user === right.user &&
+    left.port === right.port
+  );
+}
+
+function targetConnection(
+  args: Record<string, unknown>,
+  command: string,
+): string {
+  const connectionString = requiredString(args, 'connectionString', command);
+  if (
+    connectionString !== targetRemoteConnection &&
+    connectionString !== TARGET_REMOTE_REPLAY
+  ) {
+    throw new Error(`${command} did not use the fixture destination and port.`);
+  }
+  return connectionString;
+}
+
 function installPiScenarioAdapter(scenarioName: string): void {
   const cloudCommand = createCloudCommandHandler(true);
   const scenario = findPiScenario(scenarioName);
-  const ownershipDelay = Number(
-    new URLSearchParams(globalThis.location.search).get('ownership-delay') ?? 0,
-  );
+  const search = new URLSearchParams(globalThis.location.search);
+  const ownershipDelay = Number(search.get('ownership-delay') ?? 0);
+  const recentSshFixture = search.get('recent-ssh');
   if (!scenario) {
     throw new Error(
       `Unknown browser Pi scenario ${JSON.stringify(scenarioName)}. Available: ${piScenarioCatalogue()
@@ -659,6 +701,22 @@ function installPiScenarioAdapter(scenarioName: string): void {
   const nativeCounts = new Map<string, number>();
   const registeredSessionIds = new Set<string>();
   let workspace = scenarioWorkspace(scenarioName);
+  if (recentSshFixture === 'overflow') {
+    workspace.recentSshDestinations = [
+      { host: `${'long-alias-'.repeat(12)}example` },
+      ...Array.from({ length: 23 }, (_, index) => ({
+        host: `build-${index + 1}.example`,
+      })),
+    ];
+  } else if (
+    recentSshFixture === 'forget-failure' ||
+    recentSshFixture === 'seeded'
+  ) {
+    workspace.recentSshDestinations = [
+      targetRemoteDestination,
+      { host: 'build.example' },
+    ];
+  }
   const boundRuntimeIds = new Set<string>();
   const startCounts = new Map<string, number>();
   let ownershipRevision = 0;
@@ -770,23 +828,47 @@ function installPiScenarioAdapter(scenarioName: string): void {
         return projectOpeningTarget(workspace);
       }
       if (
-        command === 'probe_remote_project' &&
+        (command === 'probe_remote_project' ||
+          command === 'list_remote_directories') &&
         scenarioName === 'project-opening'
       ) {
         if (projectOpeningMode() !== 'remote') {
-          throw new Error('Remote probe ran during the local opening fixture.');
+          throw new Error(
+            'Remote browsing ran during the local opening fixture.',
+          );
         }
-        requireEqual(
-          requiredString(args, 'connectionString', command),
-          TARGET_REMOTE_CONNECTION,
-          'probe_remote_project.connectionString',
-        );
+        if (
+          command === 'probe_remote_project' &&
+          args.connectionString === manualRemoteConnection
+        ) {
+          count(command);
+          return {
+            connectionString: manualRemoteConnection,
+            host: 'manual-host',
+            workingDirectory: manualRemoteDirectory,
+            directories: [],
+          };
+        }
+        const connectionString = targetConnection(args, command);
+        const workingDirectory =
+          command === 'probe_remote_project'
+            ? targetRemoteDirectory
+            : requiredString(args, 'workingDirectory', command);
+        if (
+          workingDirectory !== targetRemoteDirectory &&
+          workingDirectory !== targetRemoteChild
+        ) {
+          throw new Error(`${command} used an unknown fixture directory.`);
+        }
         count(command);
         return {
-          connectionString: TARGET_REMOTE_CONNECTION,
-          host: 'target',
-          workingDirectory: TARGET_REMOTE_WORKING_DIRECTORY,
-          directories: [],
+          connectionString,
+          host: TARGET_REMOTE_HOST,
+          workingDirectory,
+          directories:
+            workingDirectory === targetRemoteDirectory
+              ? [{ name: 'child', path: targetRemoteChild }]
+              : [],
         };
       }
       if (
@@ -798,23 +880,52 @@ function installPiScenarioAdapter(scenarioName: string): void {
             'Remote import ran during the local opening fixture.',
           );
         }
-        requireEqual(
-          requiredString(args, 'connectionString', command),
-          TARGET_REMOTE_CONNECTION,
-          'import_remote_project.connectionString',
-        );
+        targetConnection(args, command);
         requireEqual(
           requiredString(args, 'workingDirectory', command),
-          TARGET_REMOTE_WORKING_DIRECTORY,
+          targetRemoteDirectory,
           'import_remote_project.workingDirectory',
         );
         requireEqual(
           requiredString(args, 'host', command),
-          'target',
+          TARGET_REMOTE_HOST,
           'import_remote_project.host',
         );
+        const project = projectOpeningTarget(workspace);
         count(command);
-        return projectOpeningTarget(workspace);
+        const recentSshDestinations = [
+          targetRemoteDestination,
+          ...(workspace.recentSshDestinations ?? []).filter(
+            (destination) =>
+              !sameDestination(destination, targetRemoteDestination),
+          ),
+        ];
+        workspace.recentSshDestinations = recentSshDestinations;
+        return structuredClone({ project, recentSshDestinations });
+      }
+      if (command === 'forget_ssh_destination') {
+        const { destination } = args;
+        if (
+          !isRecord(destination) ||
+          typeof destination.host !== 'string' ||
+          (destination.user !== undefined &&
+            typeof destination.user !== 'string') ||
+          (destination.port !== undefined &&
+            !Number.isInteger(destination.port))
+        ) {
+          throw new Error(
+            'forget_ssh_destination requires a structured destination.',
+          );
+        }
+        if (count(command) === 1 && recentSshFixture === 'forget-failure') {
+          return Promise.reject(
+            new Error('Injected SSH history write failure.'),
+          );
+        }
+        workspace.recentSshDestinations = (
+          workspace.recentSshDestinations ?? []
+        ).filter((recent) => !sameDestination(recent, destination));
+        return structuredClone(workspace.recentSshDestinations);
       }
       if (command === 'start_pi' || command === 'start_pi_remote') {
         requireOwner(args, activeOwner, command);
@@ -951,6 +1062,17 @@ function installPiScenarioAdapter(scenarioName: string): void {
         count(command);
         project.name = name;
         return name;
+      }
+      if (command === 'remove_project' && scenarioName === 'project-opening') {
+        const path = requiredString(args, 'path', command);
+        requireEqual(path, TARGET_PROJECT_PATH, 'remove_project.path');
+        workspace.projects = workspace.projects.filter(
+          (project) => project.path !== path,
+        );
+        if (workspace.activeProjectPath === path)
+          workspace.activeProjectPath = '';
+        count(command);
+        return null;
       }
       if (command === 'set_active_project') {
         count(command);
@@ -1242,12 +1364,12 @@ function startPiRemoteArgs(args: Record<string, unknown>): StartPiRemoteArgs {
   const targetProject = value.sessionPath === TARGET_PROJECT_SESSION.path;
   requireEqual(
     value.connectionString,
-    targetProject ? TARGET_REMOTE_CONNECTION : REMOTE_CONNECTION,
+    targetProject ? targetRemoteConnection : REMOTE_CONNECTION,
     'start_pi_remote.connectionString',
   );
   requireEqual(
     value.workingDirectory,
-    targetProject ? TARGET_REMOTE_WORKING_DIRECTORY : REMOTE_WORKING_DIRECTORY,
+    targetProject ? targetRemoteDirectory : REMOTE_WORKING_DIRECTORY,
     'start_pi_remote.workingDirectory',
   );
   return value;

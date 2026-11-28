@@ -74,7 +74,13 @@ test('scrolls an expanded tool call as one payload', async ({ page }) => {
   await page.goto('/?fixture=long-transcript&verbose-tool=true');
 
   const tool = page.locator('[data-message-id="fixture-verbose-tool"]');
-  await tool.locator('.activity-header').click();
+  const disclosure = tool.locator('.activity-header');
+  const tooltip = page.locator('.ui-tooltip:visible');
+  await disclosure.hover();
+  await expect(tooltip).toHaveCount(1);
+  await expect(tooltip).toContainText(/^Expand .+ Details$/);
+  await disclosure.click();
+  await expect(tooltip).toHaveCount(0);
 
   const details = tool.locator('.activity-details');
   const argumentsBody = details.locator('.activity-detail-body').nth(0);

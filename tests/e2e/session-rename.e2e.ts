@@ -18,6 +18,46 @@ async function selection(
   ]);
 }
 
+test('describes the focused session title without replacing its other description', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const title = page.getByRole('heading', { level: 1 }).getByRole('button', {
+    name: 'Workspace overview',
+    exact: true,
+  });
+  const hint = page.getByRole('tooltip').filter({ hasText: 'Rename Session' });
+  await title.evaluate((button) => {
+    const description = document.createElement('span');
+    description.id = 'test-title-description';
+    description.hidden = true;
+    description.textContent = 'Current session.';
+    document.body.append(description);
+    button.setAttribute('aria-describedby', description.id);
+  });
+
+  await title.focus();
+  await expect(hint).toBeVisible();
+  await expect(title).toHaveAccessibleDescription(
+    /^Current session\. Rename Session (?:⌘⇧R|Ctrl\+Shift\+R)$/,
+  );
+  const hintId = await hint.getAttribute('id');
+  expect(hintId).toBeTruthy();
+
+  await title.press('Escape');
+  await expect(hint).toHaveCount(0);
+  await expect(title).toBeFocused();
+  await expect(title).toHaveAttribute(
+    'aria-describedby',
+    'test-title-description',
+  );
+  await expect(title).toHaveAccessibleDescription('Current session.');
+
+  await title.blur();
+  await title.focus();
+  await expect(hint).toHaveAttribute('id', hintId!);
+});
+
 test('repeated rename command preserves an edited draft and selection', async ({
   page,
 }) => {

@@ -14,39 +14,67 @@
       @prompt-cancel="handleCancel"
       @prompt-draft="updateDraft"
     />
-    <button
+    <UiButton
       v-if="delayed && !promptVisible"
       class="show-prompt"
-      type="button"
+      variant="plain"
+      label="Show prompt"
       @click="showPrompt"
-    >
-      Show prompt
-    </button>
+    />
     <div
       v-if="focusControls"
       class="focus-controls"
     >
-      <input
+      <UiInput
         ref="unrelatedInput"
+        variant="unstyled"
         aria-label="Unrelated input"
       />
-      <button @click="beginSubmit">Begin Submit</button>
-      <button @click="failSubmit">Fail Submit</button>
-      <button @click="toggleDisabled">Toggle Disabled</button>
-      <button @click="updatePrompt">Update Prompt</button>
-      <button @click="openConfirmation">Open Confirmation</button>
-      <button @click="openPalette">Open Palette</button>
+      <UiButton
+        variant="plain"
+        label="Begin Submit"
+        @click="beginSubmit"
+      />
+      <UiButton
+        variant="plain"
+        label="Fail Submit"
+        @click="failSubmit"
+      />
+      <UiButton
+        variant="plain"
+        label="Toggle Disabled"
+        @click="toggleDisabled"
+      />
+      <UiButton
+        variant="plain"
+        label="Update Prompt"
+        @click="updatePrompt"
+      />
+      <UiButton
+        variant="plain"
+        label="Open Confirmation"
+        @click="openConfirmation"
+      />
+      <UiButton
+        variant="plain"
+        label="Open Palette"
+        @click="openPalette"
+      />
       <CommandPalette
         v-model:open="paletteOpen"
         :rows="[]"
       />
-      <button @click="failConfirmation">Fail Confirmation</button>
+      <UiButton
+        variant="plain"
+        label="Fail Confirmation"
+        @click="failConfirmation"
+      />
       <UiConfirmation
         :open="confirmationOpen"
         title="Fixture Confirmation"
         action="Continue"
         :busy="confirmationBusy"
-        :return-focus="() => unrelatedInput"
+        :return-focus="() => unrelatedInput?.input"
         @cancel="closeConfirmation"
         @confirm="submitConfirmation"
       />
@@ -60,7 +88,9 @@ import { reactive, ref } from 'vue';
 
 import CommandPalette from '../components/CommandPalette.vue';
 import TranscriptView from '../components/TranscriptView.vue';
+import UiButton from '../components/ui/UiButton.vue';
 import UiConfirmation from '../components/ui/UiConfirmation.vue';
+import UiInput from '../components/ui/UiInput.vue';
 import type { ExtensionDialog } from '../composables/state';
 import type { TranscriptEntry } from '../lib/pi/transcript';
 
@@ -72,7 +102,7 @@ const method = isPromptMethod(requestedMethod) ? requestedMethod : 'select';
 const submitting = params.get('submitting') === 'true';
 const disabled = ref(params.get('disabled') === 'true');
 const focusControls = params.get('focusControls') === 'true';
-const unrelatedInput = ref<HTMLInputElement>();
+const unrelatedInput = ref<InstanceType<typeof UiInput>>();
 const confirmationOpen = ref(false);
 const paletteOpen = ref(false);
 const confirmationBusy = ref(false);

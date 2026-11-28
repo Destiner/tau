@@ -73,6 +73,8 @@ import {
   openRemoteProjectDialog,
   closeRemoteProjectDialog,
   submitRemoteConnection,
+  selectRecentSshDestination,
+  forgetRecentSshDestination,
   createRemote,
   recoverSession,
 } from './remote';
@@ -157,6 +159,8 @@ function useTau() {
     openRemoteProjectDialog,
     closeRemoteProjectDialog,
     submitRemoteConnection,
+    selectRecentSshDestination,
+    forgetRecentSshDestination,
     chooseRemoteDirectory,
     toggleProject,
     reorderProjects,

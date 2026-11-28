@@ -57,12 +57,12 @@
                 side="bottom"
                 :delay="700"
               >
-                <button
+                <UiPreviewButton
                   class="project-select"
-                  type="button"
                   tabindex="0"
+                  :aria-expanded="!project.collapsed"
                   :disabled="projectActionsDisabled"
-                  @click="() => handleProjectSelect(project)"
+                  @click="() => handleProjectToggle(project)"
                 >
                   <UiStatusDot
                     v-if="projectIndicator(project)"
@@ -71,12 +71,13 @@
                     :label="indicatorLabel(projectIndicator(project))"
                   />
                   <span>{{ project.name }}</span>
-                </button>
+                </UiPreviewButton>
               </UiTooltip>
               <UiIconButton
-                class="project-toggle"
+                class="project-toggle project-header-action"
                 tabindex="0"
                 size="md"
+                variant="reveal"
                 :label="`${project.collapsed ? 'Expand' : 'Collapse'} ${project.name}`"
                 :aria-expanded="!project.collapsed"
                 :disabled="projectActionsDisabled"
@@ -84,6 +85,27 @@
               >
                 <UiIcon
                   :name="project.collapsed ? 'chevron-right' : 'chevron-down'"
+                />
+              </UiIconButton>
+              <UiIconButton
+                class="project-header-action"
+                tabindex="0"
+                size="md"
+                variant="reveal"
+                :label="`New Session in ${project.name}`"
+                :tooltip="{
+                  text: newSessionHint(project)?.title ?? 'New Session',
+                  shortcut: newSessionHint(project)?.shortcut,
+                }"
+                :disabled="
+                  projectActionsDisabled ||
+                  newSessionHint(project)?.available === false
+                "
+                @click="() => handleNewSession(project)"
+              >
+                <UiIcon
+                  class="project-new-session-icon"
+                  name="plus"
                 />
               </UiIconButton>
             </div>
@@ -133,9 +155,8 @@
                       }}</span
                     >
                   </template>
-                  <button
+                  <UiPreviewButton
                     class="session-select"
-                    type="button"
                     :aria-current="
                       isSessionSelected(project, session) ? 'page' : undefined
                     "
@@ -161,34 +182,20 @@
                         }}
                       </span>
                     </span>
-                  </button>
+                  </UiPreviewButton>
                 </UiTooltip>
-                <UiTooltip
+                <UiIconButton
                   v-if="canArchiveSession(project, session)"
-                  :text="
-                    commandHint?.('session.archive', {
-                      projectPath: project.path,
-                      sessionId: session.id,
-                    })?.title ?? 'Archive Session'
-                  "
-                  :shortcut="
-                    commandHint?.('session.archive', {
-                      projectPath: project.path,
-                      sessionId: session.id,
-                    })?.shortcut
-                  "
+                  class="session-archive"
+                  size="md"
+                  variant="reveal"
+                  :label="`Archive ${session.title}`"
+                  :tooltip="archiveTooltip(project, session)"
+                  :disabled="projectActionsDisabled"
+                  @click="() => handleArchiveSession(project, session)"
                 >
-                  <UiIconButton
-                    class="session-archive"
-                    size="md"
-                    variant="reveal"
-                    :label="`Archive ${session.title}`"
-                    :disabled="projectActionsDisabled"
-                    @click="() => handleArchiveSession(project, session)"
-                  >
-                    <UiIcon name="archive" />
-                  </UiIconButton>
-                </UiTooltip>
+                  <UiIcon name="archive" />
+                </UiIconButton>
               </div>
             </UiContextMenu>
             <div
@@ -212,49 +219,40 @@
 
     <footer class="sidebar-footer">
       <div class="project-menu-wrap">
-        <!--
-          The tooltip wraps the menu, not the menu's trigger: a trigger
-          registers with the nearest popper root, and from inside the tooltip
-          that would be the tooltip's own.
-        -->
-        <UiTooltip
-          text="Open Project"
-          shortcut="Mod+O"
-        >
-          <span class="project-menu-trigger">
-            <UiMenu
-              v-model:open="projectMenuOpen"
-              :items="projectMenuItems"
-              :min-width="176"
-            >
-              <template #trigger>
-                <UiIconButton
-                  ref="openProjectButton"
-                  size="lg"
-                  label="Open Project"
-                  :disabled="projectActionsDisabled"
-                >
-                  <UiIcon name="folder-plus" />
-                </UiIconButton>
-              </template>
-            </UiMenu>
-          </span>
-        </UiTooltip>
-        <UiTooltip
-          :text="showingArchived ? 'Show Sessions' : 'Show Archived Sessions'"
-          shortcut="Mod+Shift+H"
-        >
-          <UiIconButton
-            size="lg"
-            :class="{ active: showingArchived }"
-            :label="
-              showingArchived ? 'Show Sessions' : 'Show Archived Sessions'
-            "
-            @click="toggleArchivedView"
+        <span class="project-menu-trigger">
+          <UiMenu
+            v-model:open="projectMenuOpen"
+            :items="projectMenuItems"
+            :min-width="176"
           >
-            <UiIcon name="archive" />
-          </UiIconButton>
-        </UiTooltip>
+            <template #trigger>
+              <UiIconButton
+                ref="openProjectButton"
+                size="lg"
+                :label="openProjectLabel"
+                :tooltip="false"
+                :disabled="projectActionsDisabled"
+              >
+                <UiIcon name="folder-plus" />
+              </UiIconButton>
+            </template>
+          </UiMenu>
+        </span>
+        <UiTooltip
+          :anchor="openProjectButton?.button"
+          :text="openProjectLabel"
+          shortcut="Mod+O"
+          :disabled="projectActionsDisabled || projectMenuOpen"
+        />
+        <UiIconButton
+          size="lg"
+          :class="{ active: showingArchived }"
+          :label="showingArchived ? 'Show Sessions' : 'Show Archived Sessions'"
+          :tooltip="{ shortcut: 'Mod+Shift+H' }"
+          @click="toggleArchivedView"
+        >
+          <UiIcon name="archive" />
+        </UiIconButton>
         <IssueReportPopover
           v-if="adminMode"
           ref="issueReporter"
@@ -265,13 +263,14 @@
     </footer>
 
     <div
+      ref="resizeHandle"
       class="sidebar-resize-handle"
       :class="{
         'pointer-focused': resizeHandlePointerFocused,
         'highlight-suppressed': resizeHighlightSuppressed,
       }"
       role="separator"
-      aria-label="Resize Sidebar"
+      :aria-label="resizeSidebarLabel"
       aria-orientation="vertical"
       :aria-valuemin="MIN_SIDEBAR_WIDTH"
       :aria-valuemax="MAX_SIDEBAR_WIDTH"
@@ -286,6 +285,12 @@
       @lostpointercapture="stopSidebarResize"
       @keydown="handleSidebarResizeKeydown"
     ></div>
+    <UiTooltip
+      :anchor="resizeHandle"
+      :text="resizeSidebarLabel"
+      side="right"
+      :disabled="resizing"
+    />
   </aside>
 </template>
 
@@ -301,6 +306,7 @@ import { adminMode } from '../lib/admin-mode';
 import {
   appCommandDispatchKey,
   appCommandLookupKey,
+  type AppCommandHint,
 } from '../lib/app-commands/binding';
 import {
   applyHeldOrder,
@@ -323,8 +329,10 @@ import UiIcon from './ui/UiIcon.vue';
 import UiIconButton from './ui/UiIconButton.vue';
 import UiMenu from './ui/UiMenu.vue';
 import type { UiMenuItem } from './ui/UiMenu.vue';
+import UiPreviewButton from './ui/UiPreviewButton.vue';
 import UiStatusDot from './ui/UiStatusDot.vue';
 import UiTooltip from './ui/UiTooltip.vue';
+import type { ActionTooltip } from './ui/action-tooltip';
 
 const props = defineProps<{
   sidebarWidth: number;
@@ -337,7 +345,6 @@ const emit = defineEmits<{
 }>();
 
 const {
-  activateProject,
   addLocalProject,
   archiveSession,
   canArchiveSession,
@@ -368,10 +375,13 @@ const commandHint = inject(appCommandLookupKey, undefined);
 
 const projectList = ref<HTMLElement>();
 const sidebar = ref<HTMLElement>();
+const openProjectLabel = 'Open Project';
 const openProjectButton = ref<InstanceType<typeof UiIconButton>>();
 const projectMenuOpen = ref(false);
 const updateStatus = ref<InstanceType<typeof UpdateStatus>>();
 const issueReporter = ref<InstanceType<typeof IssueReportPopover>>();
+const resizeSidebarLabel = 'Resize Sidebar';
+const resizeHandle = ref<HTMLElement>();
 const resizeHandlePointerFocused = ref(false);
 const resizeHighlightSuppressed = ref(false);
 
@@ -526,13 +536,8 @@ function sessionTarget(
   return { projectPath: project.path, sessionId: session.id };
 }
 
-function handleProjectSelect(project: ProjectSummary): void {
-  if (projectActionsDisabled.value) return;
-  activateProject(project);
-  // Explicit navigation must reveal its session even while background order is held.
-  if (heldOrder.value.has(project.path)) {
-    heldOrder.value.set(project.path, heldSessions(projectSessions(project)));
-  }
+function newSessionHint(project: ProjectSummary): AppCommandHint | undefined {
+  return commandHint?.('session.new', projectTarget(project));
 }
 
 function handleProjectToggle(project: ProjectSummary): void {
@@ -547,11 +552,21 @@ function handleProjectToggle(project: ProjectSummary): void {
 }
 
 function handleNewSession(project: ProjectSummary): void {
+  const previousSessionId = state.activeSessionId;
   if (appCommandDispatch) {
     appCommandDispatch('session.new', projectTarget(project));
-    return;
+  } else {
+    void newSession(project);
   }
-  newSession(project);
+
+  // Creation selects synchronously, before runtime startup. Reveal only its project.
+  if (
+    state.activeProjectPath === project.path &&
+    state.activeSessionId !== previousSessionId &&
+    heldOrder.value.has(project.path)
+  ) {
+    heldOrder.value.set(project.path, heldSessions(projectSessions(project)));
+  }
 }
 
 function projectActionAnchor(path: string): HTMLButtonElement | undefined {
@@ -577,6 +592,17 @@ function handleRemoveProject(project: ProjectSummary): void {
     return;
   }
   requestProjectRemoval(project);
+}
+
+function archiveTooltip(
+  project: ProjectSummary,
+  session: SessionSummary,
+): ActionTooltip {
+  const hint = commandHint?.(
+    'session.archive',
+    sessionTarget(project, session),
+  );
+  return { text: hint?.title ?? 'Archive Session', shortcut: hint?.shortcut };
 }
 
 function handleArchiveSession(
@@ -640,16 +666,15 @@ function projectMenuItems(): UiMenuItem[] {
 
 function projectActionItems(project: ProjectSummary): UiMenuItem[] {
   const target = projectTarget(project);
-  const newSessionHint = commandHint?.('session.new', target);
+  const newHint = newSessionHint(project);
   const renameHint = commandHint?.('project.rename', target);
   const removeHint = commandHint?.('project.remove', target);
   return [
     {
-      label: newSessionHint?.title ?? 'New Session',
+      label: newHint?.title ?? 'New Session',
       icon: 'note-pencil',
-      shortcut: newSessionHint?.shortcut,
-      disabled:
-        projectActionsDisabled.value || newSessionHint?.available === false,
+      shortcut: newHint?.shortcut,
+      disabled: projectActionsDisabled.value || newHint?.available === false,
       run: () => handleNewSession(project),
     },
     {
@@ -962,6 +987,7 @@ defineExpose({
   position: relative;
   align-items: center;
   min-width: 0;
+  padding-right: 2px;
   border-radius: 7px;
   gap: 0;
 }
@@ -1014,12 +1040,38 @@ defineExpose({
   gap: 3px;
 }
 
+.project-row > .project-header-action[data-size='md'] {
+  width: var(--control-sm);
+}
+
+.project-header-action:disabled {
+  --project-action-opacity: 0.45;
+}
+
+.project-row:hover > .project-header-action[data-reveal],
+.project-row:has(> :focus-visible) > .project-header-action[data-reveal] {
+  opacity: var(--project-action-opacity, 0.65);
+}
+
+.project-row > .project-header-action[data-reveal]:focus-visible,
+.project-row > .project-header-action[data-reveal]:hover:not(:disabled) {
+  opacity: 1;
+}
+
+.project-toggle {
+  margin-right: 2px;
+}
+
 /* stylelint-disable-next-line no-descending-specificity */
 .project-toggle svg {
   flex: none;
   width: 11px;
   transform: translateY(1px);
   color: var(--muted);
+}
+
+.project-new-session-icon {
+  translate: -2px;
 }
 
 /* Nudged down with the chevron so both sit on the label's optical center. The

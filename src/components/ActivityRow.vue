@@ -5,36 +5,43 @@
       :disabled="!expandable"
     >
       <template #trigger>
-        <button
-          type="button"
+        <UiButton
           class="activity-header"
+          variant="plain"
+          :label="name"
+          :disabled="!expandable"
+          :tooltip="{
+            text: `${expanded ? 'Collapse' : 'Expand'} ${name} Details`,
+          }"
         >
-          <span class="activity-name">{{ name }}</span>
-          <span class="activity-argument">{{ argument }}</span>
-          <span
-            class="activity-end"
-            :class="{ marked: entry.toolRunning || entry.toolErrored }"
-          >
-            <UiIcon
-              v-if="expandable"
-              class="activity-disclosure"
-              :name="expanded ? 'chevron-up' : 'chevron-down'"
-            />
+          <template #caption>
+            <span class="activity-name">{{ name }}</span>
+            <span class="activity-argument">{{ argument }}</span>
             <span
-              v-if="entry.toolRunning"
-              class="activity-mark running"
-              role="status"
-              aria-label="Running"
-            ></span>
-            <UiIcon
-              v-else-if="entry.toolErrored"
-              class="activity-mark failed"
-              name="cross"
-              role="status"
-              aria-label="Failed"
-            />
-          </span>
-        </button>
+              class="activity-end"
+              :class="{ marked: entry.toolRunning || entry.toolErrored }"
+            >
+              <UiIcon
+                v-if="expandable"
+                class="activity-disclosure"
+                :name="expanded ? 'chevron-up' : 'chevron-down'"
+              />
+              <span
+                v-if="entry.toolRunning"
+                class="activity-mark running"
+                role="status"
+                aria-label="Running"
+              ></span>
+              <UiIcon
+                v-else-if="entry.toolErrored"
+                class="activity-mark failed"
+                name="cross"
+                role="status"
+                aria-label="Failed"
+              />
+            </span>
+          </template>
+        </UiButton>
       </template>
       <template #content>
         <div
@@ -112,6 +119,7 @@ import { computed } from 'vue';
 import type { TranscriptEntry } from '../lib/pi/transcript';
 
 import MarkdownText from './ui/MarkdownText.vue';
+import UiButton from './ui/UiButton.vue';
 import UiCollapsible from './ui/UiCollapsible.vue';
 import UiIcon from './ui/UiIcon.vue';
 

@@ -56,9 +56,20 @@ test('retries initial feedback dialog focus with Mod+Enter', async ({
   const label = (await modShortcut(page)).startsWith('Meta')
     ? '⌘↩'
     : 'Ctrl+Enter';
-  await expect(
-    dialog.getByRole('button', { name: 'Try Again' }),
-  ).toHaveAttribute('title', `Try Again (${label})`);
+  const retry = dialog.getByRole('button', { name: 'Try Again' });
+  await retry.hover();
+  const tooltip = page.locator('.ui-tooltip:visible');
+  await expect(tooltip).toHaveCount(1);
+  await expect(tooltip.locator('.ui-tooltip-label')).toHaveText('Try Again');
+  await expect(tooltip.locator('kbd')).toHaveText(label);
+  const dialogLayer = await dialog.evaluate((element) =>
+    Number(getComputedStyle(element).zIndex),
+  );
+  expect(
+    await tooltip.evaluate((element) =>
+      Number(getComputedStyle(element).zIndex),
+    ),
+  ).toBeGreaterThan(dialogLayer);
   await page.keyboard.press(await modShortcut(page));
 
   await expect(dialog).toHaveCount(0);

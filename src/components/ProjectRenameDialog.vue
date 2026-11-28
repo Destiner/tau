@@ -41,17 +41,17 @@
     </div>
     <template #footer>
       <UiButton
+        :label="rename?.unconfirmed ? 'Close' : 'Cancel'"
         :disabled="rename?.saving && !rename.unconfirmed"
         @click="closeProjectRename"
-        >{{ rename?.unconfirmed ? 'Close' : 'Cancel' }}</UiButton
-      >
+      />
       <UiButton
+        :label="submitLabel"
         class="rename-submit"
         variant="primary"
         :disabled="rename?.saving"
         @click="submitProjectRename"
-        >{{ submitLabel }}</UiButton
-      >
+      />
     </template>
   </UiDialog>
 </template>

@@ -28,25 +28,26 @@
 
     <div
       v-if="method === 'select'"
+      ref="optionList"
       class="extension-prompt-options"
       role="listbox"
-      @keydown="handleSelectKeydown"
+      @keydown.space.prevent
+      @keyup.space.prevent
     >
-      <button
+      <UiListOption
         v-for="(option, index) in options"
         :id="`extension-prompt-option-${index}`"
         :key="`${index}:${option}`"
         class="extension-prompt-option ui-pick-row"
-        type="button"
-        role="option"
         :data-cursor="index === selectedIndex || undefined"
         :aria-selected="index === selectedIndex"
         :disabled="submitting || disabled"
-        @mouseenter="() => highlight(index)"
+        @focus="() => (selectedIndex = index)"
+        @mouseenter="(event) => hoverOption(event, index)"
         @click="() => chooseOption(option)"
       >
         {{ option }}
-      </button>
+      </UiListOption>
       <div
         v-if="options?.length === 0"
         class="extension-prompt-empty"
@@ -91,48 +92,49 @@
       {{ error }}
     </p>
 
-    <footer class="extension-prompt-actions">
+    <footer
+      class="extension-prompt-actions"
+      @keydown.space="preventChoiceSpace"
+      @keyup.space="preventChoiceSpace"
+    >
       <template v-if="method === 'confirm'">
         <UiButton
           ref="primaryAction"
           variant="primary"
           type="button"
           :disabled="submitting || disabled"
+          label="Confirm"
           @click="confirm"
-        >
-          Confirm
-        </UiButton>
+        />
         <UiButton
+          ref="negativeAction"
           variant="secondary"
           type="button"
           :disabled="submitting || disabled"
+          label="No"
           @click="reject"
-        >
-          No
-        </UiButton>
+        />
       </template>
       <UiButton
         v-else-if="method === 'input' || method === 'editor'"
         variant="primary"
         type="submit"
+        label="Submit"
         :disabled="submitting || disabled"
-      >
-        Submit
-      </UiButton>
+      />
       <UiButton
         variant="secondary"
         type="button"
         :disabled="submitting || disabled"
+        label="Cancel"
         @click="cancel"
-      >
-        Cancel
-      </UiButton>
+      />
     </footer>
   </form>
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 
 import useDisabledFocusRepair, {
   topModal,
@@ -143,6 +145,7 @@ import MarkdownText from './ui/MarkdownText.vue';
 import UiButton from './ui/UiButton.vue';
 import UiContextMenu from './ui/UiContextMenu.vue';
 import UiInput from './ui/UiInput.vue';
+import UiListOption from './ui/UiListOption.vue';
 import UiTextarea from './ui/UiTextarea.vue';
 
 const draft = defineModel<string>('draft', { default: '' });
@@ -171,7 +174,12 @@ const dialogInput = ref<
   InstanceType<typeof UiInput> | InstanceType<typeof UiTextarea>
 >();
 const prompt = ref<HTMLFormElement>();
+const optionList = ref<HTMLDivElement>();
 const primaryAction = ref<InstanceType<typeof UiButton>>();
+const negativeAction = ref<InstanceType<typeof UiButton>>();
+const isChoice = computed(
+  () => props.method === 'select' || props.method === 'confirm',
+);
 const selectedIndex = ref(0);
 let escapeClaimed = false;
 
@@ -217,9 +225,7 @@ watch(
 function focusDialog(): void {
   if (props.submitting || props.disabled) return;
   if (props.method === 'select') {
-    const options = prompt.value?.querySelectorAll<HTMLButtonElement>(
-      '.extension-prompt-option',
-    );
+    const options = optionList.value?.querySelectorAll('button');
     (
       options?.[selectedIndex.value] ??
       options?.[0] ??
@@ -232,8 +238,14 @@ function focusDialog(): void {
   }
 }
 
-function highlight(index: number): void {
+function hoverOption(event: MouseEvent, index: number): void {
   selectedIndex.value = index;
+  if (
+    optionList.value?.contains(document.activeElement) &&
+    event.currentTarget instanceof HTMLButtonElement
+  ) {
+    event.currentTarget.focus({ preventScroll: true });
+  }
 }
 
 function chooseOption(value: string): void {
@@ -252,8 +264,19 @@ function cancel(): void {
   if (!props.submitting && !props.disabled) emit('cancel');
 }
 
+function preventChoiceSpace(event: KeyboardEvent): void {
+  if (isChoice.value) event.preventDefault();
+}
+
 function handleKeydown(event: KeyboardEvent): void {
-  if (event.isComposing) return;
+  const composing =
+    event.isComposing || (isChoice.value && event.keyCode === 229);
+  if (isChoice.value && event.key === 'Enter' && (composing || event.repeat)) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+  if (composing) return;
 
   if (event.key === 'Escape') {
     event.preventDefault();
@@ -265,22 +288,22 @@ function handleKeydown(event: KeyboardEvent): void {
     return;
   }
 
-  if (
-    event.key !== 'Enter' ||
-    (!event.metaKey && !event.ctrlKey) ||
-    props.submitting ||
-    props.disabled
-  ) {
+  if (props.submitting || props.disabled) return;
+
+  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (props.method === 'confirm') {
+      if (event.shiftKey) reject();
+      else confirm();
+    } else if (props.method === 'input' || props.method === 'editor') {
+      handleSubmit();
+    }
     return;
   }
 
-  event.preventDefault();
-  event.stopPropagation();
-  if (props.method === 'confirm') {
-    if (event.shiftKey) reject();
-    else confirm();
-  } else if (props.method === 'input' || props.method === 'editor') {
-    handleSubmit();
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    moveChoiceFocus(event);
   }
 }
 
@@ -295,24 +318,25 @@ function handleSubmit(): void {
   emit('submit', draft.value);
 }
 
-function handleSelectKeydown(event: KeyboardEvent): void {
-  const options = props.options ?? [];
-  if (
-    props.submitting ||
-    props.disabled ||
-    props.method !== 'select' ||
-    options.length === 0
-  ) {
-    return;
-  }
-  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+function moveChoiceFocus(event: KeyboardEvent): void {
+  const target = event.target;
+  if (!(target instanceof HTMLButtonElement)) return;
+
+  if (optionList.value?.contains(target)) {
     event.preventDefault();
+    const options = optionList.value.querySelectorAll('button');
     const delta = event.key === 'ArrowDown' ? 1 : -1;
-    selectedIndex.value =
+    const next =
       (selectedIndex.value + delta + options.length) % options.length;
-    prompt.value
-      ?.querySelectorAll<HTMLButtonElement>('.extension-prompt-option')
-      [selectedIndex.value]?.focus({ preventScroll: true });
+    options[next]?.focus({ preventScroll: true });
+  } else if (props.method === 'confirm') {
+    const confirmButton = primaryAction.value?.button;
+    const noButton = negativeAction.value?.button;
+    if (target !== confirmButton && target !== noButton) return;
+    event.preventDefault();
+    (target === confirmButton ? noButton : confirmButton)?.focus({
+      preventScroll: true,
+    });
   }
 }
 </script>
@@ -359,6 +383,14 @@ function handleSelectKeydown(event: KeyboardEvent): void {
 
 .extension-prompt-option:focus-visible {
   outline: 0;
+}
+
+.extension-prompt-option:not([data-cursor]):is(:hover, :focus-visible) {
+  background: transparent;
+}
+
+.extension-prompt-option:focus-visible:not([data-cursor])::before {
+  content: none;
 }
 
 .extension-prompt-empty {

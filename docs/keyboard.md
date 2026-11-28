@@ -115,11 +115,25 @@ keeps the draft and offers **Retry**. After 10 seconds without confirmation,
 **Close** permits leaving the dialog while the write finishes; it does not cancel
 the save, and another save for that project is blocked until it settles.
 
+## Open Remote Project
+
+The SSH connection field opens empty and focused. Use **↓** to move to a
+recent destination and **↑/↓** to move between destinations or back to the
+field. **Enter** on a destination connects immediately; choose a folder in the
+next step to import it. You can also type a connection manually and press
+**Enter** as before.
+
+**Tab** reaches each destination's separate **Forget** button. **Enter** or
+**Space** on Forget removes only the suggestion, without connecting or removing
+projects. The read-only reconnect dialog does not show recent destinations.
+
 ## Local surfaces
 
-Activating a focused project header makes that project active and expands it. Its
-separate chevron controls folding only; it does not activate the project. Right
-expands and Left collapses the project when either control has focus.
+Click or activate a project name or its chevron to expand or collapse the session
+list without switching sessions. Right expands and Left collapses when either
+control has focus. The chevron and **New Session** button appear on project-header
+hover or keyboard focus. **New Session** expands its project if needed and creates
+and selects a fresh session there.
 
 These remain scoped to their existing surface and are excluded from the global
 palette unless their launcher appears above.
@@ -130,11 +144,17 @@ palette unless their launcher appears above.
 | Session rename                | Enter or `⌘Enter` commits; Escape cancels. Opening the palette does not blur-commit.                                                                 |
 | Menus and context menus       | Arrows, Enter, and their existing typeahead; Escape dismisses that menu.                                                                             |
 | Remote project dialog         | Enter/`⌘Enter` submits where applicable; `⌘↑` goes to parent; Escape closes only when dismissible.                                                   |
-| Pi prompts                    | Existing arrows/Enter selection; `⌘Enter` primary submit; `⌘⇧Enter` negative confirmation; Escape cancels only that prompt when eligible.            |
+| Pi prompts                    | Up/Down moves the highlight; Enter answers. `⌘Enter` submits text or confirms; `⌘⇧Enter` answers No. Escape cancels when eligible.                   |
 | Model and effort lists        | Existing list navigation and Enter selection; Escape closes the current list.                                                                        |
 | Queue and unsent review       | Escape dismisses the focused status/review; `⌘Enter` restores a focused draft when eligible.                                                         |
 | Feedback, quit, and update UI | `⌘Enter` activates the eligible primary action; `⌘⇧Enter` skips an update; Escape closes only a dismissible surface.                                 |
 | Issue reporter                | `⌘⇧S` toggles Include Current Session within the report; `⌘Enter` submits; Escape retains unsent text.                                               |
+
+In Pi choice and yes/no prompts, a fresh Enter accepts the highlighted answer,
+including the initial default. Space, letters, digits, repeated Enter, and Enter
+during IME composition do not answer. If a question arrives while you type, the
+composer keeps the draft it had before arrival. Typing while the choice prompt
+has focus is ignored, not added to the draft.
 
 An inline Pi prompt blocks global palette and shortcut actions. Explicit sidebar
 row actions to mark a session read/unread or archive an eligible session remain
@@ -165,13 +185,16 @@ Escape restores Find rather than dismissing both surfaces.
 
 ## Discovery and tooltip policy
 
-Shortcut hints use the same formatter as the palette and accurately identify
-any contextual scope. Informational path, status, and session tooltips remain
-informational rather than acquiring invented commands.
+Use shared control wrappers even when the control does not need a tooltip.
+Enabled standalone actions, selectors, checkboxes, disclosures, and handles
+show their label on hover and on keyboard focus when focusable. Keep one hint
+per control: rich row previews replace default tooltips. Editable fields,
+menu/list options, disabled controls, and content links do not need tooltips.
 
-The approved compact tooltip treatment is **C**: an outline, secondary, small
-shortcut treatment, with **Enter** spelled out (not a return-glyph substitute).
-It must not steal menu/popover anchors or create fake tab stops.
+Shortcut hints use the palette's platform notation and reflect the actual
+binding and its scope. Don't add shortcuts to informational previews.
+Action hints must not steal menu/popover anchors, take Escape from the
+surface, or create tab stops.
 
 ## Explicit exclusions
 

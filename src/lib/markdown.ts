@@ -30,10 +30,6 @@ interface PathOpenGesture {
 
 const FILE_PATH_ATTRIBUTE = 'data-tau-path';
 
-const CODE_COPY_ATTRIBUTE = 'data-tau-copy';
-
-const DIAGRAM_EXPAND_ATTRIBUTE = 'data-tau-expand';
-
 const CODE_LANGUAGE_ATTRIBUTE = 'data-tau-lang';
 
 /** A fenced block, whose end is unambiguous because `pre` cannot nest. */
@@ -55,6 +51,54 @@ const COPIED_ICON =
 
 const EXPAND_ICON =
   '<svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M216,48V88a8,8,0,0,1-16,0V56H168a8,8,0,0,1,0-16h40A8,8,0,0,1,216,48ZM88,200H56V168a8,8,0,0,0-16,0v40a8,8,0,0,0,8,8H88a8,8,0,0,0,0-16Zm120-40a8,8,0,0,0-8,8v32H168a8,8,0,0,0,0,16h40a8,8,0,0,0,8-8V168A8,8,0,0,0,208,160ZM88,40H48a8,8,0,0,0-8,8V88a8,8,0,0,0,16,0V56H88a8,8,0,0,0,0-16Z"/></svg>';
+
+const markdownActions = {
+  copyCode: {
+    marker: 'data-tau-copy',
+    className: 'code-copy',
+    label: 'Copy Code',
+    icons: COPY_ICON + COPIED_ICON,
+  },
+  expandDiagram: {
+    marker: 'data-tau-expand',
+    className: 'diagram-expand',
+    label: 'Expand Diagram',
+    icons: EXPAND_ICON,
+  },
+} as const;
+
+type MarkdownActionKind = keyof typeof markdownActions;
+
+const actionMarkers = Object.values(markdownActions).map(
+  ({ marker }) => marker,
+);
+const actionSelector = actionMarkers
+  .map((marker) => `button[${marker}]`)
+  .join(', ');
+
+function renderMarkdownAction(kind: MarkdownActionKind): string {
+  const { marker, className, label, icons } = markdownActions[kind];
+  return `<button type="button" class="${className}" ${marker} aria-label="${escapeHtmlAttribute(label)}">${icons}</button>`;
+}
+
+interface MarkdownAction {
+  button: HTMLButtonElement;
+  kind: MarkdownActionKind;
+  label: string;
+}
+
+function markdownActionAt(
+  target: EventTarget | null,
+  root: HTMLElement | undefined,
+): MarkdownAction | undefined {
+  if (!root || !(target instanceof Element)) return;
+  const button = target.closest(actionSelector);
+  if (!(button instanceof HTMLButtonElement) || !root.contains(button)) return;
+  const kind = button.hasAttribute(markdownActions.copyCode.marker)
+    ? 'copyCode'
+    : 'expandDiagram';
+  return { button, kind, label: markdownActions[kind].label };
+}
 
 /**
  * A drawn diagram's wrapper, holding exactly the SVG the renderer drew.
@@ -98,15 +142,13 @@ function renderMarkdown(source: string, options: MarkdownOptions = {}): string {
     ? marked.parseInline(source, { async: false })
     : marked.parse(source, { async: false });
 
-  // one cannot pass itself off as something the app wrote about it.
-
+  // Only markup inserted after sanitization may carry the app's action markers.
   const protectedLinks = protectLocalFileHrefs(parsed as string);
   let html = purify.sanitize(protectedLinks.html, {
     FORBID_ATTR: [
       FILE_PATH_ATTRIBUTE,
-      CODE_COPY_ATTRIBUTE,
       CODE_LANGUAGE_ATTRIBUTE,
-      DIAGRAM_EXPAND_ATTRIBUTE,
+      ...actionMarkers,
     ],
   });
   html = restoreProtectedLocalFileHrefs(html, protectedLinks.links);
@@ -203,7 +245,7 @@ function addCodeCopyButtons(html: string): string {
     const label = language
       ? ` ${CODE_LANGUAGE_ATTRIBUTE}="${escapeHtmlAttribute(language)}"`
       : '';
-    return `<div class="code-block"${label}>${block}<button type="button" class="code-copy" ${CODE_COPY_ATTRIBUTE} aria-label="Copy Code">${COPY_ICON}${COPIED_ICON}</button></div>`;
+    return `<div class="code-block"${label}>${block}${renderMarkdownAction('copyCode')}</div>`;
   });
 }
 
@@ -213,10 +255,7 @@ function addCodeCopyButtons(html: string): string {
 function addDiagramExpandButtons(html: string): string {
   DIAGRAM_BLOCK.lastIndex = 0;
   return html.replace(DIAGRAM_BLOCK, (block) =>
-    block.replace(
-      /<\/div>$/,
-      `<button type="button" class="diagram-expand" ${DIAGRAM_EXPAND_ATTRIBUTE} aria-label="Expand Diagram">${EXPAND_ICON}</button></div>`,
-    ),
+    block.replace(/<\/div>$/, `${renderMarkdownAction('expandDiagram')}</div>`),
   );
 }
 
@@ -484,12 +523,11 @@ function normalizePath(path: string): string {
   return (rooted ? '/' : '') + segments.join('/');
 }
 
-export type { MarkdownOptions, FileReference, PathOpenGesture };
+export type { MarkdownAction, MarkdownOptions, FileReference, PathOpenGesture };
 
 export {
-  CODE_COPY_ATTRIBUTE,
   CODE_LANGUAGE_ATTRIBUTE,
-  DIAGRAM_EXPAND_ATTRIBUTE,
+  markdownActionAt,
   FILE_PATH_ATTRIBUTE,
   addCodeCopyButtons,
   addDiagramExpandButtons,

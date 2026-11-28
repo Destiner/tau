@@ -196,6 +196,8 @@ function createLifecycle(
     cancelSelectionTracking();
     cancelSavedPreview();
     invalidateLifecycle();
+    state.remoteForgetPending = false;
+    state.remoteForgetError = '';
     if (!initialization) state.initializing = false;
     if (!initialization) {
       unlisten?.();

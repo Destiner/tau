@@ -20,6 +20,8 @@ import {
   type ProjectSummary,
   type RemoteDirectoryChoice,
   type RemoteDirectoryListing,
+  type RemoteProjectImport,
+  type SshDestination,
 } from '../state';
 
 import {
@@ -52,6 +54,7 @@ function openRemoteProjectDialog(): void {
   state.remoteDialogStep = 'connection';
   state.remoteConnectionString = '';
   state.remoteConnectionError = '';
+  state.remoteForgetError = '';
   state.remoteConnecting = false;
   clearRemoteDirectoryBrowser();
   state.remoteDialogOpen = true;
@@ -70,15 +73,80 @@ function closeRemoteProjectDialog(): void {
   clearRemoteRetry();
   state.remoteDialogOpen = false;
   state.remoteConnectionError = '';
+  state.remoteForgetError = '';
   clearRemoteDirectoryBrowser();
 }
 
+function canUseRecentSshDestination(destination: SshDestination): boolean {
+  return (
+    !projectActionsDisabled.value &&
+    state.remoteDialogOpen &&
+    state.remoteDialogMode === 'add' &&
+    state.remoteDialogStep === 'connection' &&
+    !state.remoteConnecting &&
+    !state.remoteForgetPending &&
+    (state.workspace?.recentSshDestinations ?? []).some(
+      ({ host, user, port }) =>
+        host === destination.host &&
+        user === destination.user &&
+        port === destination.port,
+    )
+  );
+}
+
+async function selectRecentSshDestination(
+  destination: SshDestination,
+): Promise<void> {
+  if (!canUseRecentSshDestination(destination)) return;
+  const { host, user, port } = destination;
+  const target = user ? `${user}@${host}` : host;
+  state.remoteConnectionString =
+    port !== undefined
+      ? `ssh -p ${port} ${target}`
+      : target === 'ssh'
+        ? 'ssh ssh'
+        : target;
+  await submitRemoteConnection();
+}
+
+async function forgetRecentSshDestination(
+  destination: SshDestination,
+): Promise<void> {
+  if (!canUseRecentSshDestination(destination)) return;
+  const ownsDialog = dialogOwner();
+  const lifecycle = currentLifecycle();
+  state.remoteForgetPending = true;
+  state.remoteForgetError = '';
+  try {
+    const recent = await writeWorkspace<SshDestination[]>(
+      'forget_ssh_destination',
+      { destination },
+    );
+    if (lifecycle === currentLifecycle() && state.workspace)
+      state.workspace.recentSshDestinations = recent;
+  } catch {
+    if (ownsDialog() && state.remoteDialogStep === 'connection')
+      state.remoteForgetError = errorCopy.forgetSshDestination;
+  } finally {
+    if (lifecycle === currentLifecycle()) state.remoteForgetPending = false;
+  }
+}
+
 async function submitRemoteConnection(): Promise<void> {
-  if (projectActionsDisabled.value || state.remoteConnecting) return;
+  if (
+    projectActionsDisabled.value ||
+    !state.remoteDialogOpen ||
+    state.remoteConnecting ||
+    state.remoteDialogStep !== 'connection'
+  ) {
+    return;
+  }
   if (state.remoteDialogMode === 'retry') {
     await retryRemoteConnection();
     return;
   }
+  if (state.remoteForgetPending) return;
+  state.remoteForgetError = '';
 
   const connectionString = state.remoteConnectionString.trim();
   if (!connectionString) {
@@ -116,18 +184,21 @@ function createRemote(activateProject: (project: ProjectSummary) => void): {
   ): Promise<void> {
     if (
       projectActionsDisabled.value ||
+      !state.remoteDialogOpen ||
+      state.remoteDialogMode !== 'add' ||
       state.remoteConnecting ||
       state.remoteDialogStep !== 'directory'
     ) {
       return;
     }
     const ownsDialog = dialogOwner();
+    const lifecycle = currentLifecycle();
     const intent = openingIntent;
     state.remoteConnecting = true;
     state.remoteConnectionError = '';
     try {
       if (choice === 'select') {
-        const imported = await writeWorkspace<ProjectSummary>(
+        const imported = await writeWorkspace<RemoteProjectImport>(
           'import_remote_project',
           {
             connectionString: state.remoteConnectionString,
@@ -135,9 +206,13 @@ function createRemote(activateProject: (project: ProjectSummary) => void): {
             host: state.remoteDirectoryHost,
           },
         );
+        // The committed history is independent of which dialog or session is open.
+        if (lifecycle === currentLifecycle() && state.workspace)
+          state.workspace.recentSshDestinations =
+            imported.recentSshDestinations;
         if (!ownsDialog()) return;
         if (isCurrentNavigation(intent)) {
-          const project = mergeImportedProject(imported);
+          const project = mergeImportedProject(imported.project);
           if (project) activateProject(project);
         }
         state.remoteConnecting = false;
@@ -244,6 +319,8 @@ export {
   openRemoteProjectDialog,
   closeRemoteProjectDialog,
   submitRemoteConnection,
+  selectRecentSshDestination,
+  forgetRecentSshDestination,
   createRemote,
   recoverSession,
 };

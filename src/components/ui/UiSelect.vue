@@ -3,16 +3,20 @@
     v-if="filterable"
     v-model:open="open"
   >
-    <PopoverTrigger as-child>
+    <PopoverTrigger
+      ref="popoverTrigger"
+      as-child
+    >
       <button
         class="ui-select ui-selector-trigger"
         type="button"
         role="combobox"
         :disabled="disabled || undefined"
-        :aria-label="ariaLabel || undefined"
+        :aria-label="label"
         :aria-expanded="open"
         :style="triggerStyle"
         aria-haspopup="listbox"
+        v-bind="$attrs"
       >
         <span
           class="ui-select-value ui-selector-value"
@@ -35,9 +39,10 @@
           v-if="options.length > 0"
           class="ui-select-search"
         >
-          <input
+          <UiInput
             ref="searchInput"
             v-model="query"
+            variant="unstyled"
             type="search"
             autocomplete="off"
             spellcheck="false"
@@ -66,13 +71,11 @@
             >
               {{ group.label }}
             </div>
-            <button
+            <UiListOption
               v-for="option in group.options"
               :id="optionId(option)"
               :key="option.value"
               class="ui-menu-item ui-select-option ui-select-filtered-option ui-selector-option"
-              type="button"
-              role="option"
               tabindex="-1"
               :data-current="option.value === modelValue || undefined"
               :data-cursor="option.value === cursorValue || undefined"
@@ -82,7 +85,7 @@
               @click="() => selectOption(option)"
             >
               {{ option.label }}
-            </button>
+            </UiListOption>
           </template>
           <p
             v-if="filteredOptions.length === 0"
@@ -102,9 +105,11 @@
     :disabled="disabled || undefined"
   >
     <SelectTrigger
+      ref="selectTrigger"
       class="ui-select ui-selector-trigger"
-      :aria-label="ariaLabel || undefined"
+      :aria-label="label"
       :style="triggerStyle"
+      v-bind="$attrs"
     >
       <span
         class="ui-select-value ui-selector-value"
@@ -134,6 +139,14 @@
       </SelectContent>
     </SelectPortal>
   </SelectRoot>
+
+  <UiTooltip
+    v-if="tooltip !== false"
+    v-bind="tooltip"
+    :anchor="triggerElement"
+    :disabled="disabled || open"
+    :text="tooltip?.text ?? label"
+  />
 </template>
 
 <script setup lang="ts">
@@ -153,6 +166,11 @@ import {
 import { computed, nextTick, ref, useId, watch } from 'vue';
 
 import { preserveSurfaceUnderPalette } from '../../lib/app-commands/surface';
+
+import UiInput from './UiInput.vue';
+import UiListOption from './UiListOption.vue';
+import UiTooltip from './UiTooltip.vue';
+import type { ActionTooltip } from './action-tooltip';
 
 interface UiSelectOption {
   value: string;
@@ -178,16 +196,17 @@ const props = withDefaults(
     /** Shown when the value is not among the options (a stale selection). */
     fallbackLabel?: string;
     disabled?: boolean;
-    ariaLabel?: string;
+    label: string;
+    tooltip?: ActionTooltip;
     optionsLabel?: string;
     maxWidth?: number;
 
     filterable?: boolean;
   }>(),
   {
+    tooltip: undefined,
     placeholder: undefined,
     fallbackLabel: undefined,
-    ariaLabel: undefined,
     optionsLabel: undefined,
     maxWidth: 210,
     filterable: false,
@@ -195,15 +214,22 @@ const props = withDefaults(
 );
 const emit = defineEmits<{ select: [value: string] }>();
 
+defineOptions({ inheritAttrs: false });
+
 const selectId = useId();
 const listId = `${selectId}-list`;
 const query = ref('');
 const cursorValue = ref('');
-const searchInput = ref<HTMLInputElement>();
+const searchInput = ref<InstanceType<typeof UiInput>>();
+const popoverTrigger = ref<InstanceType<typeof PopoverTrigger>>();
+const selectTrigger = ref<InstanceType<typeof SelectTrigger>>();
+const triggerElement = computed(() => {
+  const trigger = props.filterable ? popoverTrigger.value : selectTrigger.value;
+  const element: unknown = trigger?.$el;
+  return element instanceof HTMLButtonElement ? element : undefined;
+});
 const triggerStyle = computed(() => ({ maxWidth: `${props.maxWidth}px` }));
-const optionsLabel = computed(
-  () => props.optionsLabel ?? `${props.ariaLabel ?? 'Option'}s`,
-);
+const optionsLabel = computed(() => props.optionsLabel ?? `${props.label}s`);
 const filteredOptions = computed(() => {
   const normalized = query.value.trim().toLocaleLowerCase();
   if (!normalized) return props.options;
@@ -298,7 +324,7 @@ function selectOption(option: UiSelectOption): void {
 function handleOpenAutoFocus(event: Event): void {
   if (props.options.length === 0) return;
   event.preventDefault();
-  void nextTick(() => searchInput.value?.focus());
+  void nextTick(() => searchInput.value?.input?.focus());
 }
 
 function handleSearchKeydown(event: KeyboardEvent): void {

@@ -15,22 +15,20 @@
       >
         <UiButton
           v-if="incident?.action"
+          :label="actionLabel"
           size="md"
           variant="primary"
           :disabled="busy"
-          :title="
-            primaryShortcut ? `${actionLabel} (${primaryShortcut})` : undefined
-          "
+          :tooltip="{ shortcut: primaryShortcut }"
           @click="requestAction"
-          >{{ actionLabel }}</UiButton
-        >
+        />
         <UiButton
           v-if="dismissible"
+          label="Close"
           size="md"
           :disabled="busy"
           @click="requestClose"
-          >Close</UiButton
-        >
+        />
       </div>
     </template>
   </UiDialog>
@@ -45,7 +43,6 @@ import {
   appCommandLookupKey,
 } from '../lib/app-commands/binding';
 import {
-  formatShortcut,
   shortcutMatches,
   type ShortcutPlatform,
 } from '../lib/app-commands/shortcut';
@@ -70,10 +67,9 @@ const commandHint = inject(appCommandLookupKey, undefined);
 const platform: ShortcutPlatform = /Mac|iPhone|iPad/.test(navigator.platform)
   ? 'mac'
   : 'non-mac';
-const primaryShortcut = computed(() => {
-  const shortcut = commandHint?.('feedback.action')?.shortcut;
-  return shortcut ? formatShortcut(shortcut, platform) : undefined;
-});
+const primaryShortcut = computed(
+  () => commandHint?.('feedback.action')?.shortcut ?? 'Mod+Enter',
+);
 const footerElement = ref<HTMLElement>();
 let dialogContent: HTMLElement | undefined;
 
@@ -132,8 +128,10 @@ function requestClose(): void {
 function handleKeydown(event: KeyboardEvent): void {
   if (event.isComposing) return;
 
-  const shortcut = commandHint?.('feedback.action')?.shortcut ?? 'Mod+Enter';
-  if (shortcutMatches(event, shortcut, platform) && props.incident?.action) {
+  if (
+    shortcutMatches(event, primaryShortcut.value, platform) &&
+    props.incident?.action
+  ) {
     event.preventDefault();
     event.stopPropagation();
     if (!props.busy) requestAction();
