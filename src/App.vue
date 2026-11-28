@@ -252,27 +252,30 @@
       <template #footer>
         <UiButton
           size="md"
+          :label="projectTrustCloseLabel"
+          :tooltip="false"
           :disabled="projectTrustBusy"
           @click="closeProjectTrust"
-          >{{ projectTrustCloseLabel }}</UiButton
-        >
+        />
         <UiButton
           v-if="projectTrustPhase.kind === 'offer' || projectTrustBusy"
           size="md"
           variant="primary"
+          :label="projectTrustBusy ? 'Saving…' : 'Trust'"
+          :tooltip="false"
           :disabled="projectTrustBusy"
           @click="grantProjectTrust"
-          >{{ projectTrustBusy ? 'Saving…' : 'Trust' }}</UiButton
-        >
+        />
         <UiButton
           v-else-if="projectTrustRetry"
           size="md"
           variant="primary"
-          @click="recheckProjectTrust"
-          >{{
+          :label="
             projectTrustPhase.kind === 'unconfirmed' ? 'Recheck' : 'Try Again'
-          }}</UiButton
-        >
+          "
+          :tooltip="false"
+          @click="recheckProjectTrust"
+        />
       </template>
     </UiDialog>
     <ProjectRenameDialog :return-focus="projectRenameReturnFocus" />

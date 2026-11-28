@@ -4,33 +4,29 @@
     class="session-header"
   >
     <div class="session-heading">
-      <UiTooltip
+      <UiIconButton
         v-if="projectTrustShield"
-        text="Untrusted Project"
-        side="bottom"
+        class="project-trust-shield"
+        size="sm"
+        variant="fill"
+        label="Untrusted Project"
+        :tooltip="{ side: 'bottom' }"
+        @click="openProjectTrust"
       >
-        <UiIconButton
-          class="project-trust-shield"
-          size="sm"
-          variant="fill"
-          label="Untrusted Project"
-          @click="openProjectTrust"
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 20 20"
+          fill="none"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
         >
-          <svg
-            aria-hidden="true"
-            viewBox="0 0 20 20"
-            fill="none"
-            stroke-width="1.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path
-              d="M10 2.5 16.5 5v4.4c0 3.6-2.6 6.2-6.5 8.1-3.9-1.9-6.5-4.5-6.5-8.1V5L10 2.5Z"
-            />
-            <path d="M10 6.5v3.7m0 2.6h.01" />
-          </svg>
-        </UiIconButton>
-      </UiTooltip>
+          <path
+            d="M10 2.5 16.5 5v4.4c0 3.6-2.6 6.2-6.5 8.1-3.9-1.9-6.5-4.5-6.5-8.1V5L10 2.5Z"
+          />
+          <path d="M10 6.5v3.7m0 2.6h.01" />
+        </svg>
+      </UiIconButton>
       <UiInput
         v-if="renamingSession"
         ref="sessionTitleInput"

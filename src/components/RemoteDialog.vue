@@ -59,15 +59,15 @@
           :key="destinationLabel(destination)"
           class="remote-recent-row"
         >
-          <button
-            type="button"
+          <UiButton
+            variant="plain"
             class="remote-recent-destination ui-pick-row"
+            :label="destinationLabel(destination)"
             :aria-disabled="recentActionsDisabled || undefined"
             :title="destinationLabel(destination)"
+            :tooltip="false"
             @click="() => selectDestination(destination)"
-          >
-            {{ destinationLabel(destination) }}
-          </button>
+          />
           <UiIconButton
             class="remote-recent-forget"
             size="lg"
@@ -161,6 +161,7 @@ import { computed, nextTick, ref, watch } from 'vue';
 import type { SshDestination } from '../composables/state';
 import textFieldItems from '../lib/text-menu';
 
+import UiButton from './ui/UiButton.vue';
 import UiContextMenu from './ui/UiContextMenu.vue';
 import UiDialog from './ui/UiDialog.vue';
 import UiIcon from './ui/UiIcon.vue';
