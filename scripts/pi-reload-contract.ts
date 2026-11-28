@@ -748,12 +748,11 @@ async function trustDecision(
   pi: string,
   project: string,
   startup: JsonRecord,
-  previous?: JsonRecord,
+  operation: 'inspect' | 'grant',
 ): Promise<{ saved: boolean; exact: boolean; identity: JsonRecord }> {
   const helper = fileURLToPath(
     new URL('../src-tauri/pi-extensions/project-trust.mjs', import.meta.url),
   );
-  const operation = previous ? 'grant' : 'inspect';
   let result: JsonRecord | undefined;
   try {
     const { stdout } = await promisify(execFile)(
@@ -766,7 +765,6 @@ async function trustDecision(
           projectFolder: project,
           runtimeCwd: project,
           startup,
-          previous,
         }),
       ],
       {
@@ -919,25 +917,32 @@ async function trustContract(): Promise<void> {
       startup,
       'The runtime must attest the target before trust can be saved.',
     );
-    const initial = await trustDecision(root, env, pi, project, startup);
-    assert.equal(
-      initial.saved,
-      false,
-      'Disposable project must start with no saved grant.',
-    );
-    const grant = await trustDecision(
+    const initial = await trustDecision(
       root,
       env,
       pi,
       project,
       startup,
-      initial.identity,
+      'inspect',
     );
+    assert.equal(
+      initial.saved,
+      false,
+      'Disposable project must start with no saved grant.',
+    );
+    const grant = await trustDecision(root, env, pi, project, startup, 'grant');
     assert.ok(
       grant.saved && grant.exact,
       'Grant must read back for the exact folder.',
     );
-    const saved = await trustDecision(root, env, pi, project, startup);
+    const saved = await trustDecision(
+      root,
+      env,
+      pi,
+      project,
+      startup,
+      'inspect',
+    );
     assert.equal(
       saved.saved && saved.exact,
       true,

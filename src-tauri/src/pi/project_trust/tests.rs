@@ -7,6 +7,24 @@ use std::{
 };
 
 const NONCE: &str = "d6a5042a-2216-4653-9ec1-a008cd0c7710";
+const STAND_IN_PI: &str = r#"#!/usr/bin/env node
+(async () => {
+  const { pathToFileURL } = require('node:url');
+  const extension = process.argv[process.argv.indexOf('--extension') + 1];
+  const { default: bridge } = await import(pathToFileURL(extension).href);
+  bridge({
+    registerCommand() {},
+    on(event, handler) {
+      if (event !== 'session_start') throw Error('expected session_start');
+      handler({}, {
+        cwd: process.cwd(),
+        isProjectTrusted: () => false,
+        sessionManager: { getSessionId: () => 'session', getSessionFile: () => undefined },
+      });
+    },
+  });
+})().catch(() => { process.exitCode = 1; });
+"#;
 const SDK: &str = r#"
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -71,9 +89,11 @@ impl Fixture {
         fs::create_dir(&bin).unwrap();
         let pi = bin.join("pi");
         let launcher = installation.join("cli.js");
-        executable(&launcher, "#!/usr/bin/env node\n");
+        executable(&launcher, STAND_IN_PI);
         symlink(launcher, &pi).unwrap();
         symlink(&node, bin.join("node")).unwrap();
+        let agent = root.join("custom agent");
+        fs::create_dir(&agent).unwrap();
         Some(Self {
             _dir: dir,
             root: root.clone(),
@@ -83,7 +103,7 @@ impl Fixture {
             sibling,
             node,
             pi,
-            agent: root.join("custom agent"),
+            agent,
         })
     }
 
@@ -110,24 +130,42 @@ impl Fixture {
         }
     }
 
+    fn startup(&self, cwd: &Path) -> Value {
+        let extension = crate::pi_helper::provision(&self.root.join("data")).unwrap();
+        let mut command = Command::new(&self.node);
+        command
+            .arg(&self.pi)
+            .arg("--extension")
+            .arg(extension)
+            .current_dir(cwd)
+            .env_remove("NODE_OPTIONS")
+            .env("TAU_PROJECT_TRUST_CLI", &self.pi)
+            .env("TAU_PROJECT_TRUST_NONCE", NONCE)
+            .env("HOME", &self.home)
+            .env("PI_CODING_AGENT_DIR", &self.agent);
+        startup_identity(command, cwd)
+    }
+
     fn inspect(&self, project: &Path, cwd: &Path) -> TrustReply<(TrustResult, Value)> {
-        invoke_helper(
-            self.helper(&self.pi, &request(project, cwd, None)),
-            NONCE,
-            None,
+        let request = request(project, cwd, &self.startup(cwd), "inspect");
+        invoke_helper(self.helper(&self.pi, &request), NONCE, None)
+    }
+
+    fn grant_helper(&self, project: &Path, inspection: &Inspection) -> HelperCommand {
+        self.helper(
+            &self.pi,
+            &request(
+                project,
+                Path::new(&inspection.runtime_cwd),
+                &inspection.identity,
+                "grant",
+            ),
         )
     }
 
     fn grant(&self, project: &Path, inspection: &Inspection) -> TrustReply<(TrustResult, Value)> {
         invoke_helper(
-            self.helper(
-                &self.pi,
-                &request(
-                    project,
-                    Path::new(&inspection.runtime_cwd),
-                    Some(inspection),
-                ),
-            ),
+            self.grant_helper(project, inspection),
             NONCE,
             Some(inspection),
         )
@@ -143,12 +181,12 @@ fn executable(path: &Path, source: &str) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
 }
 
-fn request(folder: &Path, cwd: &Path, inspection: Option<&Inspection>) -> Value {
+fn request(folder: &Path, cwd: &Path, startup: &Value, operation: &str) -> Value {
     json!({
-        "operation": if inspection.is_some() { "grant" } else { "inspect" },
+        "operation": operation,
         "projectFolder": folder,
         "runtimeCwd": cwd,
-        "previous": inspection.map(|item| &item.identity),
+        "startup": startup,
         "nonce": NONCE,
     })
 }
@@ -223,7 +261,7 @@ fn moved_replaced_or_missing_folder_and_changed_agent_dir_do_not_write() {
         &f.project,
         f.inspect(&alias, &f.project).unwrap(),
     );
-    let mut helper = f.helper(&f.pi, &request(&alias, &f.project, Some(&record)));
+    let mut helper = f.grant_helper(&alias, &record);
     let other_agent = f.root.join("another agent");
     fs::create_dir(&other_agent).unwrap();
     helper.command.env("PI_CODING_AGENT_DIR", &other_agent);
@@ -269,7 +307,7 @@ fn malformed_store_and_symlink_are_not_overwritten_and_post_write_error_is_uncon
     );
     assert_eq!(fs::read_to_string(&unrelated).unwrap(), "{}");
     fs::remove_file(&file).unwrap();
-    let mut helper = f.helper(&f.pi, &request(&f.project, &f.project, Some(&record)));
+    let mut helper = f.grant_helper(&f.project, &record);
     helper.command.env("TEST_FAIL_AFTER_WRITE", "1");
     assert_eq!(
         invoke_helper(helper, NONCE, Some(&record)).unwrap_err(),
@@ -282,7 +320,6 @@ fn malformed_store_and_symlink_are_not_overwritten_and_post_write_error_is_uncon
 fn startup_identity_changes_are_rejected_before_sdk_import() {
     for change in ["folder", "agent", "sdk", "installation"] {
         let Some(f) = Fixture::new() else { return };
-        fs::create_dir(&f.agent).unwrap();
         let marker = f.root.join("sdk-imported");
         let sdk = f.root.join("install/sdk.mjs");
         let marked_sdk = format!(
@@ -291,8 +328,7 @@ fn startup_identity_changes_are_rejected_before_sdk_import() {
             SDK
         );
         fs::write(&sdk, &marked_sdk).unwrap();
-        let baseline = f.inspect(&f.project, &f.project).unwrap().1;
-        fs::remove_file(&marker).unwrap();
+        let baseline = f.startup(&f.project);
         match change {
             "folder" => {
                 fs::rename(&f.project, f.project.with_extension("old")).unwrap();
@@ -320,8 +356,7 @@ fn startup_identity_changes_are_rejected_before_sdk_import() {
             }
             _ => unreachable!(),
         }
-        let mut req = request(&f.project, &f.project, None);
-        req["startup"] = baseline;
+        let req = request(&f.project, &f.project, &baseline, "inspect");
         assert_eq!(
             invoke_helper(f.helper(&f.pi, &req), NONCE, None).unwrap_err(),
             TrustError::Mismatch,
@@ -356,7 +391,7 @@ fn unsupported_layout_never_imports_project_node_modules() {
     .unwrap();
     let wrapper = f.root.join("unknown-wrapper");
     executable(&wrapper, "#!/bin/sh\nexit 1\n");
-    let req = request(&f.project, &f.project, None);
+    let req = request(&f.project, &f.project, &f.startup(&f.project), "inspect");
     for pi in [&wrapper, &fake.join("cli.js")] {
         let mut helper = f.helper(pi, &req);
         helper.command.current_dir(&f.project);
@@ -619,51 +654,30 @@ fn test_ssh_config(connection: &SshConnection) -> SshConfig {
 }
 
 fn remote_startup(f: &Fixture, connection: &SshConnection) -> Value {
-    fs::create_dir(&f.agent).unwrap();
-    // Run the shipped launch bridge from a stand-in Pi CLI, independently of the grant helper.
-    executable(
-        &f.pi.canonicalize().unwrap(),
-        r#"#!/usr/bin/env node
-(async () => {
-  const { pathToFileURL } = require('node:url');
-  const extension = process.argv[process.argv.indexOf('--extension') + 1];
-  const { default: bridge } = await import(pathToFileURL(extension).href);
-  bridge({
-    registerCommand() {},
-    on(event, handler) {
-      if (event !== 'session_start') throw Error('expected session_start');
-      handler({}, {
-        cwd: process.cwd(),
-        isProjectTrusted: () => false,
-        sessionManager: { getSessionId: () => 'session', getSessionFile: () => undefined },
-      });
-    },
-  });
-})().catch(() => { process.exitCode = 1; });
-"#,
-    );
     let command = connection.pi_command(&crate::ssh::remote_pi_command(
         f.project.to_str().unwrap(),
         None,
         NONCE,
     ));
+    startup_identity(command, &f.project)
+}
+
+fn startup_identity(command: Command, cwd: &Path) -> Value {
     let output = capture_success(command, LOCAL_TIMEOUT)
-        .unwrap_or_else(|_| panic!("fake remote Pi launch failed"));
+        .unwrap_or_else(|_| panic!("stand-in Pi launch failed"));
     let frame = output
         .split(|byte| *byte == b'\n')
         .find_map(|line| line.strip_prefix(PRIVATE_FRAME))
         .expect("launch trust frame");
     let startup: Observation = serde_json::from_slice(frame).unwrap();
     assert_eq!(startup.nonce, NONCE);
-    assert_eq!(startup.cwd, f.project.to_str().unwrap());
+    assert_eq!(startup.cwd, cwd.to_str().unwrap());
     assert!(!startup.trusted);
     startup.identity.expect("independent launch identity")
 }
 
-fn remote_request(f: &Fixture, startup: &Value, previous: Option<&Inspection>) -> String {
-    let mut req = request(&f.project, &f.project, previous);
-    req["startup"] = startup.clone();
-    req.to_string()
+fn remote_request(f: &Fixture, startup: &Value, operation: &str) -> String {
+    request(&f.project, &f.project, startup, operation).to_string()
 }
 
 fn fake_ssh(f: &Fixture, extra: &str) -> SshConnection {
@@ -710,8 +724,13 @@ fn fake_ssh_runs_quoted_exact_folder_and_detects_changed_remote_endpoint() {
     let folder = f.project.to_str().unwrap();
     let config = test_ssh_config(&first);
     let startup = remote_startup(&f, &first);
-    let run = |connection: &SshConnection, previous| {
-        let req = remote_request(&f, &startup, previous);
+    let run = |connection: &SshConnection, previous: Option<&Inspection>| {
+        let operation = if previous.is_some() {
+            "grant"
+        } else {
+            "inspect"
+        };
+        let req = remote_request(&f, &startup, operation);
         invoke_helper(
             remote_command(
                 folder,
@@ -813,6 +832,7 @@ fn remote_project_path_node_is_never_executed() {
             shell_words::quote(f.project.to_str().unwrap())
         ),
     );
+    let startup = remote_startup(&f, &fake_ssh(&f, ""));
     let connection = fake_ssh(
         &f,
         &format!(
@@ -821,7 +841,7 @@ fn remote_project_path_node_is_never_executed() {
         ),
     );
     let config = test_ssh_config(&connection);
-    let req = request(&f.project, &f.project, None).to_string();
+    let req = remote_request(&f, &startup, "inspect");
     let helper = remote_command(
         f.project.to_str().unwrap(),
         &connection,
@@ -844,7 +864,7 @@ fn fake_ssh_disconnects_and_timeouts_do_not_fall_back_or_claim_success() {
     let first = fake_ssh(&f, "");
     let folder = f.project.to_str().unwrap();
     let startup = remote_startup(&f, &first);
-    let req = remote_request(&f, &startup, None);
+    let req = remote_request(&f, &startup, "inspect");
     let config = test_ssh_config(&first);
     let verified = invoke_helper(
         remote_command(
@@ -868,7 +888,7 @@ fn fake_ssh_disconnects_and_timeouts_do_not_fall_back_or_claim_success() {
         &f.project,
         verified,
     );
-    let grant = remote_request(&f, &startup, Some(&record));
+    let grant = remote_request(&f, &startup, "grant");
     let stalled = fake_ssh(&f, "exec /bin/sleep 2");
     let mut helper = remote_command(
         folder,

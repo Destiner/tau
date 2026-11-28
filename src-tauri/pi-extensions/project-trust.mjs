@@ -256,7 +256,6 @@ function configuredAgentDir(config) {
   return join(home, configDir, 'agent');
 }
 
-// Legacy canaries can use a disposable agent directory that Pi has not created.
 function physicalPath(path) {
   try {
     return realpathSync.native(path);
@@ -285,42 +284,26 @@ function record(value) {
   return value && typeof value === 'object' && !Array.isArray(value);
 }
 
-function containsIdentity(before, after) {
+function sameIdentity(before, after) {
   return (
-    record(before) &&
+    Object.keys(before).length === Object.keys(after).length &&
     Object.keys(after).every(
       (key) => Object.hasOwn(before, key) && before[key] === after[key],
     )
   );
 }
 
-function sameIdentity(before, after) {
-  return (
-    containsIdentity(before, after) &&
-    Object.keys(before).length === Object.keys(after).length
-  );
-}
-
-function agentIdentity(path, native) {
-  if (native) {
-    const agentDir = canonicalDirectory(path);
-    return { agentDir, agentId: fileId(agentDir) };
-  }
-  const agentDir = physicalPath(path);
-  const info = statSync(agentDir, { throwIfNoEntry: false });
-  if (info && !info.isDirectory()) throw 'unavailable';
-  return { agentDir, agentId: info ? fileId(agentDir) : null };
+function agentIdentity(path) {
+  const agentDir = canonicalDirectory(path);
+  return { agentDir, agentId: fileId(agentDir) };
 }
 
 async function execute() {
   if (request.operation !== 'inspect' && request.operation !== 'grant')
     throw 'unavailable';
   const grant = request.operation === 'grant';
-  const native = Object.hasOwn(request, 'startup');
-  const { startup, previous } = request;
-  if (native && !record(startup)) throw 'unsupported';
-  if ((grant || previous != null) && !record(previous)) throw 'mismatch';
-  const expected = [startup, previous].filter(record);
+  const { startup } = request;
+  if (!record(startup)) throw 'unsupported';
   const baseIdentity = () => {
     const folder = folderForRequest();
     const { installation, piConfig } = installationFor(folder, pi, runtimeNode);
@@ -335,15 +318,17 @@ async function execute() {
     };
   };
   const { identity: base, piConfig } = baseIdentity();
-  for (const prior of expected) {
-    if (!containsIdentity(prior, base)) throw 'mismatch';
-  }
-  const startupAgent = native
-    ? agentIdentity(configuredAgentDir(piConfig), true)
-    : null;
+  const {
+    agentDir: expectedDir,
+    agentId: expectedId,
+    ...expectedBase
+  } = startup;
+  if (!sameIdentity(expectedBase, base)) throw 'mismatch';
   if (
-    startupAgent &&
-    expected.some((prior) => !sameIdentity(prior, { ...base, ...startupAgent }))
+    !sameIdentity(
+      { agentDir: expectedDir, agentId: expectedId },
+      agentIdentity(configuredAgentDir(piConfig)),
+    )
   )
     throw 'mismatch';
 
@@ -369,41 +354,32 @@ async function execute() {
   )
     throw 'unsupported';
 
-  const verify = (prior, allowCreation = false) => {
+  const verify = () => {
     const current = baseIdentity().identity;
     if (!sameIdentity(base, current)) throw 'mismatch';
     const identity = {
       ...current,
-      ...agentIdentity(resolve(base.folder, getAgentDir()), native),
+      ...agentIdentity(resolve(base.folder, getAgentDir())),
     };
-    if (startupAgent && !sameIdentity({ ...base, ...startupAgent }, identity))
-      throw 'mismatch';
-    for (const before of prior) {
-      const comparison =
-        allowCreation && !native && before.agentId === null
-          ? { ...identity, agentId: null }
-          : identity;
-      if (!sameIdentity(before, comparison)) throw 'mismatch';
-    }
+    if (!sameIdentity(startup, identity)) throw 'mismatch';
     checkStore(identity.agentDir);
     return identity;
   };
 
-  const beforeRead = verify(expected);
-  const { folder, agentDir } = beforeRead;
+  const { folder, agentDir } = verify();
   const store = new ProjectTrustStore(agentDir);
   const before = store.getEntry(folder);
   const saved = before?.decision === true;
   const exact = saved && before.path === folder;
-  const identity = verify([beforeRead], true);
+  const identity = verify();
   if (!grant || exact) return { folder, saved, exact, identity };
 
   dispatched = true;
   store.set(folder, true);
-  const afterWrite = verify([identity], true);
+  verify();
   const entry = store.getEntry(folder);
   if (entry?.decision !== true || entry.path !== folder) throw 'unconfirmed';
-  return { folder, saved: true, exact: true, identity: verify([afterWrite]) };
+  return { folder, saved: true, exact: true, identity: verify() };
 }
 
 let result;

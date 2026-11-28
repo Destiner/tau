@@ -526,7 +526,6 @@ impl TrustCall<'_> {
             "projectFolder": self.location.folder(),
             "runtimeCwd": self.runtime_cwd,
             "startup": &live.identity,
-            "previous": inspection.map(|item| &item.identity),
             "nonce": nonce,
         })
         .to_string();
