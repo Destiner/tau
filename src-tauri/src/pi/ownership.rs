@@ -198,6 +198,7 @@ pub(super) fn spawn_command<R: Runtime>(
     owner_id: String,
     runtime_id: String,
     mut command: Command,
+    trust: Option<super::project_trust::TrustLaunch>,
 ) -> Result<u64, String> {
     let mut manager = state
         .inner
@@ -233,6 +234,7 @@ pub(super) fn spawn_command<R: Runtime>(
             child: Arc::clone(&child),
             writer,
             usable: Arc::new(AtomicBool::new(true)),
+            trust,
         },
     );
 
@@ -349,6 +351,19 @@ pub(super) fn spawn_stdout_reader<R: Runtime>(
                         bytes.pop();
                     }
                     if bytes.is_empty() {
+                        continue;
+                    }
+                    if let Some(frame) = bytes.strip_prefix(super::project_trust::PRIVATE_FRAME) {
+                        if let Ok(mut current) = manager.lock() {
+                            if let Some(trust) = current
+                                .processes
+                                .get_mut(&runtime_id)
+                                .filter(|process| process.generation == generation)
+                                .and_then(|process| process.trust.as_mut())
+                            {
+                                trust.observe(frame);
+                            }
+                        }
                         continue;
                     }
                     if let Some(reason) = line_drop_reason(&bytes) {

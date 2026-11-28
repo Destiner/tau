@@ -127,6 +127,8 @@
         <SessionHeader
           ref="sessionHeader"
           :palette-open="paletteOpen"
+          :project-trust-shield="untrustedProject"
+          @project-trust="openProjectTrust"
           @mousedown="handleTitlebarMouseDown"
           @dblclick="handleTitlebarDoubleClick"
           @composer-focus="focusComposer"
@@ -242,6 +244,41 @@
       @close="restorePaletteFocus"
     />
 
+    <UiDialog
+      v-model:open="projectTrustOpen"
+      class="project-trust-dialog"
+      title="Untrusted Project"
+      :description="projectTrustDescription"
+      :return-focus="projectTrustReturnFocus"
+      :busy="projectTrustBusy"
+      data-modal-size="compact"
+    >
+      <template #footer>
+        <UiButton
+          size="md"
+          :disabled="projectTrustBusy"
+          @click="closeProjectTrust"
+          >{{ projectTrustCloseLabel }}</UiButton
+        >
+        <UiButton
+          v-if="projectTrustPhase.kind === 'offer' || projectTrustBusy"
+          size="md"
+          variant="primary"
+          :disabled="projectTrustBusy"
+          @click="grantProjectTrust"
+          >{{ projectTrustBusy ? 'Saving…' : 'Trust' }}</UiButton
+        >
+        <UiButton
+          v-else-if="projectTrustRetry"
+          size="md"
+          variant="primary"
+          @click="recheckProjectTrust"
+          >{{
+            projectTrustPhase.kind === 'unconfirmed' ? 'Recheck' : 'Try Again'
+          }}</UiButton
+        >
+      </template>
+    </UiDialog>
     <ProjectRenameDialog :return-focus="projectRenameReturnFocus" />
     <UiConfirmation
       :open="state.projectRemoval !== null"
@@ -324,12 +361,14 @@ import TranscriptSearch from './components/TranscriptSearch.vue';
 import TranscriptView from './components/TranscriptView.vue';
 import UiButton from './components/ui/UiButton.vue';
 import UiConfirmation from './components/ui/UiConfirmation.vue';
+import UiDialog from './components/ui/UiDialog.vue';
 import UiIcon from './components/ui/UiIcon.vue';
 import UiIconButton from './components/ui/UiIconButton.vue';
 import UiMenu from './components/ui/UiMenu.vue';
 import UiSpinner from './components/ui/UiSpinner.vue';
 import UiTooltip from './components/ui/UiTooltip.vue';
 import { type ProjectSummary, type SessionSummary } from './composables/state';
+import useProjectTrust from './composables/useProjectTrust';
 import useTau from './composables/useTau';
 import { useTranscriptFind } from './composables/useTranscriptFind';
 import { createAdminCodeMatcher } from './lib/admin-code';
@@ -469,6 +508,28 @@ const {
   submitExtensionDialog,
   cancelExtensionDialog,
 } = useTau();
+const {
+  open: projectTrustOpen,
+  untrusted: untrustedProject,
+  phase: projectTrustPhase,
+  busy: projectTrustBusy,
+  description: projectTrustDescription,
+  show: showProjectTrust,
+  close: closeProjectTrust,
+  recheck: recheckProjectTrust,
+  grant: grantProjectTrust,
+  returnFocus: projectTrustOrigin,
+} = useProjectTrust(activeController, activeProject);
+const projectTrustRetry = computed(() =>
+  ['unconfirmed', 'unavailable', 'mismatch'].includes(
+    projectTrustPhase.value.kind,
+  ),
+);
+const projectTrustCloseLabel = computed(() =>
+  ['saved', 'unsupported'].includes(projectTrustPhase.value.kind)
+    ? 'Close'
+    : 'Cancel',
+);
 
 /**
  * An indicator without a state still reserves its slot, so it stays hidden
@@ -524,6 +585,7 @@ function navigationBlockingSurface(): boolean {
     state.projectRemoval ||
     quitRequest.value ||
     state.remoteDialogOpen ||
+    projectTrustOpen.value ||
     feedbackDialogOpen.value ||
     fullscreenViewerOpen.value ||
     sessionHeader.value?.renaming ||
@@ -1368,6 +1430,7 @@ const feedbackDialogOpen = computed(
   () =>
     Boolean(activeFeedback.value) &&
     !recoveryFeedback.value &&
+    !projectTrustOpen.value &&
     quitRequest.value === null &&
     !state.remoteDialogOpen &&
     !state.projectRename &&
@@ -1750,15 +1813,31 @@ function handleQueueRecover(index: number): void {
   focusAfterPaletteNavigation();
 }
 
-let renameOrigin: HTMLElement | undefined;
-function projectRenameReturnFocus(): HTMLElement | undefined {
+function openProjectTrust(trigger: HTMLButtonElement): void {
+  if (!paletteOpen.value && !navigationBlockingSurface())
+    showProjectTrust(trigger);
+}
+
+function projectTrustReturnFocus(): HTMLElement | undefined {
+  return (
+    otherModalFocus('project-trust-dialog') ??
+    [
+      projectTrustOrigin(),
+      composerBar.value?.input,
+      firstRunLocalProjectButton.value?.button,
+      projectSidebar.value?.openProjectButton,
+    ].find((control) => control?.isConnected && !control.matches(':disabled'))
+  );
+}
+
+function otherModalFocus(closingClass: string): HTMLElement | undefined {
   const newerModal = Array.from(
     document.querySelectorAll<HTMLElement>(
       '[role="dialog"]:not([aria-modal="false"]), [role="alertdialog"]',
     ),
   )
     .reverse()
-    .find((element) => !element.classList.contains('project-rename'));
+    .find((element) => !element.classList.contains(closingClass));
   if (newerModal) {
     const focused = document.activeElement;
     return focused instanceof HTMLElement && newerModal.contains(focused)
@@ -1767,17 +1846,25 @@ function projectRenameReturnFocus(): HTMLElement | undefined {
           'button:not(:disabled), input:not(:disabled), textarea:not(:disabled)',
         ) ?? newerModal);
   }
-  return [
-    renameOrigin,
-    composerBar.value?.input,
-    firstRunLocalProjectButton.value?.button,
-    projectSidebar.value?.openProjectButton,
-  ].find(
-    (control) =>
-      control?.isConnected &&
-      control !== document.body &&
-      !control.closest('[role="menu"], .command-palette') &&
-      !control.matches(':disabled'),
+  return undefined;
+}
+
+let renameOrigin: HTMLElement | undefined;
+function projectRenameReturnFocus(): HTMLElement | undefined {
+  return (
+    otherModalFocus('project-rename') ??
+    [
+      renameOrigin,
+      composerBar.value?.input,
+      firstRunLocalProjectButton.value?.button,
+      projectSidebar.value?.openProjectButton,
+    ].find(
+      (control) =>
+        control?.isConnected &&
+        control !== document.body &&
+        !control.closest('[role="menu"], .command-palette') &&
+        !control.matches(':disabled'),
+    )
   );
 }
 

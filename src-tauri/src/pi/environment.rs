@@ -1,5 +1,5 @@
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::{fs::PermissionsExt, process::CommandExt};
 use std::{
     env,
     ffi::{OsStr, OsString},
@@ -252,17 +252,41 @@ pub(super) fn parse_login_shell_path(output: &str) -> Option<OsString> {
 
 /// Interactive startup files can hang, which would otherwise block the caller
 /// forever, so the child is killed once the timeout elapses.
-pub(super) fn capture_stdout(mut command: Command, timeout: Duration) -> Option<Vec<u8>> {
+pub(super) fn capture_stdout(command: Command, timeout: Duration) -> Option<Vec<u8>> {
+    capture_stdout_inner(command, timeout, false).ok()
+}
+
+pub(super) enum CaptureFailure {
+    NotStarted,
+    Unknown,
+}
+
+pub(super) fn capture_success(
+    command: Command,
+    timeout: Duration,
+) -> Result<Vec<u8>, CaptureFailure> {
+    capture_stdout_inner(command, timeout, true)
+}
+
+fn capture_stdout_inner(
+    mut command: Command,
+    timeout: Duration,
+    require_success: bool,
+) -> Result<Vec<u8>, CaptureFailure> {
+    #[cfg(unix)]
+    if require_success {
+        command.process_group(0);
+    }
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .ok()?;
+        .map_err(|_| CaptureFailure::NotStarted)?;
     let Some(stdout) = child.stdout.take() else {
         let _ = child.kill();
         let _ = child.wait();
-        return None;
+        return Err(CaptureFailure::Unknown);
     };
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
@@ -271,18 +295,34 @@ pub(super) fn capture_stdout(mut command: Command, timeout: Duration) -> Option<
 
     let deadline = Instant::now() + timeout;
     loop {
-        if child.try_wait().ok().flatten().is_some() {
-            break;
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if require_success && !status.success() {
+                    return Err(CaptureFailure::Unknown);
+                }
+                break;
+            }
+            Ok(None) if Instant::now() < deadline => thread::sleep(PROCESS_POLL_INTERVAL),
+            _ => {
+                #[cfg(unix)]
+                if require_success {
+                    // An SSH proxy or a login shell child can still own the output pipe.
+                    unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(CaptureFailure::Unknown);
+            }
         }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return None;
-        }
-        thread::sleep(PROCESS_POLL_INTERVAL);
     }
-    let remaining = deadline.checked_duration_since(Instant::now())?;
-    receiver.recv_timeout(remaining).ok().flatten()
+    let remaining = deadline
+        .checked_duration_since(Instant::now())
+        .ok_or(CaptureFailure::Unknown)?;
+    receiver
+        .recv_timeout(remaining)
+        .ok()
+        .flatten()
+        .ok_or(CaptureFailure::Unknown)
 }
 
 pub(super) fn read_bounded_stdout(mut stdout: impl Read, limit: usize) -> Option<Vec<u8>> {

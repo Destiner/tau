@@ -22,6 +22,7 @@ fn replacing_a_runtime_waits_for_eof_before_starting_its_successor() {
             "owner-a".into(),
             "runtime-a".into(),
             command,
+            None,
         )
         .expect("start EOF-aware runtime")
     };

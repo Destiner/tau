@@ -50,6 +50,7 @@ pub fn run() {
 
     let builder = tauri::Builder::default()
         .manage(pi::PiState::default())
+        .manage(pi::project_trust::ProjectTrustState::default())
         .manage(file_preview::FilePreviewState::default())
         .manage(quit::QuitState::default())
         .manage(update::UpdateState::default())
@@ -120,6 +121,8 @@ pub fn run() {
             file_preview::prepare_file_preview,
             file_preview::release_file_preview,
             pi::claim_pi_frontend,
+            pi::project_trust::inspect_project_trust,
+            pi::project_trust::grant_project_trust,
             pi::read_pi_frontend_revision,
             pi::send_pi,
             pi::start_pi,

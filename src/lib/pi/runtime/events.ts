@@ -67,6 +67,11 @@ import {
   discardReleasedEmptySession,
 } from './lifecycle';
 import {
+  adoptProjectTrustGeneration,
+  handleProjectTrustStatus,
+  retireProjectTrustGeneration,
+} from './project-trust';
+import {
   confirmSubmittedPrompt,
   settleInterruptedSubmittedPrompt,
   cancelPendingPrompt,
@@ -86,6 +91,7 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
   touchController(controller);
   if (event.kind === 'started') {
     if (event.generation > controller.generation) {
+      retireProjectTrustGeneration(controller, controller.generation);
       clearReload(controller, true);
       controller.reloadFence = undefined;
       cancelSetup(controller);
@@ -113,10 +119,17 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
       controller.compactionReason = undefined;
       controller.compactionStartedWhileStreaming = false;
       controller.generation = event.generation;
+      adoptProjectTrustGeneration(controller, event.generation);
     }
     return;
   }
-  if (event.generation !== controller.generation) return;
+  const currentGeneration = event.generation === controller.generation;
+  // The stdout reader may forward session_start before native emits started.
+  if (
+    !currentGeneration &&
+    !(controller.starting && event.generation > controller.generation)
+  )
+    return;
 
   if (event.kind === 'rpc' && event.line) {
     let value: unknown;
@@ -125,10 +138,19 @@ async function handleBridgeEvent(event: PiBridgeEvent): Promise<void> {
     } catch {
       return;
     }
-    await handleRpc(controller, value);
+    if (currentGeneration) await handleRpc(controller, value);
+    else {
+      const request = asRecord(value);
+      if (request?.type === 'extension_ui_request') {
+        handleProjectTrustStatus(controller, event.generation, request);
+      }
+    }
     return;
   }
-  if (event.kind === 'stderr') return;
+  if (event.kind === 'error' || event.kind === 'exited') {
+    retireProjectTrustGeneration(controller, event.generation);
+  }
+  if (!currentGeneration || event.kind === 'stderr') return;
   if (event.kind === 'error') {
     if (failSetupConnection(controller)) return;
     controller.retry = undefined;

@@ -11,7 +11,7 @@ use registry::{archive_revision, load_project_registry, mark_archive_intent};
 use sessions::{mutate_session_archive, register_session_inner, set_active_session_inner};
 
 pub use registry::pi_agent_dir;
-pub(crate) use registry::{default_session_dir, remote_project};
+pub(crate) use registry::{default_session_dir, registered_project, remote_project};
 #[allow(unused_imports)] // Retained for crate-internal callers of the storage facade.
 pub(crate) use sessions::list_sessions_in;
 

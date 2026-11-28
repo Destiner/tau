@@ -1,6 +1,7 @@
 mod environment;
 mod ownership;
 mod process;
+pub(crate) mod project_trust;
 mod transport;
 
 use crate::ssh::{remote_pi_command, SshConnection};
@@ -226,6 +227,7 @@ fn start_pi_with<R: Runtime>(
         session_dir.as_deref(),
         session_path.as_deref(),
     );
+    let trust = project_trust::TrustLaunch::local(&mut command, &pi_path, project_path);
     spawn_command(
         app,
         state,
@@ -234,6 +236,7 @@ fn start_pi_with<R: Runtime>(
         owner_id,
         runtime_id,
         command,
+        Some(trust),
     )
 }
 #[tauri::command]
@@ -255,7 +258,13 @@ pub fn start_pi_remote(
         .and_then(|context| telemetry.start_command_span(context, "start_pi_remote"));
     let span_context = command_span.as_ref().map(|span| span.span_context());
     let connection = SshConnection::parse(&connection_string)?;
-    let remote_command = remote_pi_command(&working_directory, session_path.as_deref());
+    let mut trust = project_trust::TrustLaunch::remote(connection_string, working_directory);
+    let command = connection.pi_command(&remote_pi_command(
+        trust.folder(),
+        session_path.as_deref(),
+        trust.nonce(),
+    ));
+    trust.capture_ssh_config(&command);
     spawn_command(
         app,
         &state,
@@ -263,7 +272,8 @@ pub fn start_pi_remote(
         span_context.as_ref(),
         owner_id,
         runtime_id,
-        connection.pi_command(&remote_command),
+        command,
+        Some(trust),
     )
 }
 #[tauri::command]

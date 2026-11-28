@@ -20,6 +20,10 @@ import {
   type QueueSnapshot,
   type QueueSubmission,
 } from '../lib/pi/queue';
+import {
+  projectTrustRevision,
+  type ProjectTrustRuntime,
+} from '../lib/pi/runtime/project-trust';
 import type {
   HistoryLayer,
   LocalError,
@@ -253,6 +257,10 @@ interface SessionController {
   efforts: ThinkingLevel[];
   commands: CommandOption[];
   commandsLoaded: boolean;
+  commandCatalogueTrustRevision?: symbol;
+  projectTrust?: ProjectTrustRuntime;
+  projectTrustClosedThrough?: number;
+  projectTrustSuspended?: boolean;
   setupFailure?: {
     step: 'model' | 'effort';
     provider: string;
@@ -1098,17 +1106,20 @@ function inheritControllerSettings(
     controller.currentEffort = source.currentEffort;
   }
 
+  const trustRevision = projectTrustRevision(controller.projectPath);
   const commandSource = [...state.controllers]
     .reverse()
     .find(
       (candidate) =>
         candidate.key !== controller.key &&
         candidate.projectPath === controller.projectPath &&
-        candidate.commandsLoaded,
+        candidate.commandsLoaded &&
+        candidate.commandCatalogueTrustRevision === trustRevision,
     );
   if (commandSource) {
     controller.commands = [...commandSource.commands];
     controller.commandsLoaded = true;
+    controller.commandCatalogueTrustRevision = trustRevision;
   }
 }
 

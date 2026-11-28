@@ -1,5 +1,7 @@
 use crate::models::{RemoteDirectoryEntry, RemoteDirectoryListing};
 use crate::telemetry::{trace_context::TraceContext, Telemetry};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::{
     env,
     ffi::OsStr,
@@ -90,18 +92,67 @@ impl SshConnection {
     }
 
     pub fn pi_command(&self, remote_command: &str) -> Command {
+        self.pi_command_with_options(remote_command, &[], &[])
+    }
+
+    fn pi_command_with_options(
+        &self,
+        remote_command: &str,
+        enforced: &[&str],
+        final_args: &[&str],
+    ) -> Command {
         let mut command = Command::new(&self.executable);
         let (destination, options) = self
             .arguments
             .split_last()
             .expect("validated SSH connection arguments");
         command
+            .args(enforced)
             .args(REMOTE_PI_KEEPALIVE_OPTIONS)
             .args(options)
             .args(["-S", "none"])
             .args(SSH_OPTIONS)
+            .args(final_args)
             .arg(destination)
             .arg(remote_command);
+        command
+    }
+
+    pub(crate) fn trust_config_command(command: &Command) -> Command {
+        // Include the actual command: OpenSSH's Match rules can depend on it.
+        let mut config = Command::new(command.get_program());
+        config
+            .arg("-G")
+            .args(command.get_args())
+            .env("SSH_ASKPASS_REQUIRE", "never");
+        config
+    }
+
+    pub(crate) fn trust_command(&self, remote_command: &str) -> Command {
+        // Keep runtime transport options while suppressing interactive features and forwarding.
+        let mut command = self.pi_command_with_options(
+            remote_command,
+            &[
+                "-o",
+                "RequestTTY=no",
+                "-o",
+                "StrictHostKeyChecking=yes",
+                "-o",
+                "ClearAllForwardings=yes",
+                "-o",
+                "ForwardAgent=no",
+                "-o",
+                "ForwardX11=no",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "ConnectionAttempts=1",
+            ],
+            &["-T", "--"],
+        );
+        command.env("SSH_ASKPASS_REQUIRE", "never");
         command
     }
 
@@ -376,10 +427,15 @@ fn parse_directory_listing(
     })
 }
 
-pub fn remote_pi_command(working_directory: &str, session_path: Option<&str>) -> String {
+pub fn remote_pi_command(
+    working_directory: &str,
+    session_path: Option<&str>,
+    nonce: &str,
+) -> String {
     remote_login_shell_command(&crate::pi_helper::remote_bootstrap(
         working_directory,
         session_path,
+        nonce,
     ))
 }
 
@@ -389,6 +445,21 @@ pub fn remote_login_shell_command(command: &str) -> String {
         shell_words::quote(REMOTE_SHELL_LAUNCHER),
         shell_words::quote(command),
     )
+}
+
+/// csh interprets neither multiline arguments nor history markers safely.
+pub(crate) fn remote_posix_login_command(script: &str, args: &[&str]) -> String {
+    let mut command = format!("exec /bin/sh -c {} tau", shell_words::quote(script));
+    for arg in args {
+        command.push(' ');
+        command.push_str(&shell_words::quote(arg));
+    }
+    let encoded = command
+        .bytes()
+        .map(|byte| format!("\\0{byte:03o}"))
+        .collect::<String>();
+    let decoder = format!("exec /bin/sh -c \"$(printf '%b' '{encoded}')\"");
+    remote_login_shell_command(&format!("exec /bin/sh -c {}", shell_words::quote(&decoder)))
 }
 
 fn single_line(value: &str) -> String {
@@ -405,13 +476,21 @@ fn resolve_ssh_binary() -> Result<PathBuf, String> {
             return Ok(path);
         }
     }
-    if let Ok(output) = Command::new("which").arg("ssh").output() {
-        if output.status.success() {
-            let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-            if path.is_file() {
-                return Ok(path);
-            }
-        }
+    if let Some(path) = env::var_os("PATH").and_then(|path| {
+        env::split_paths(&path)
+            .map(|directory| directory.join("ssh"))
+            .find(|path| {
+                let Ok(metadata) = path.metadata() else {
+                    return false;
+                };
+                #[cfg(unix)]
+                if metadata.permissions().mode() & 0o111 == 0 {
+                    return false;
+                }
+                metadata.is_file()
+            })
+    }) {
+        return Ok(path);
     }
     [
         "/usr/bin/ssh",
@@ -527,6 +606,7 @@ mod tests {
         let command = remote_pi_command(
             "/home/timur/Project files",
             Some("/home/timur/.pi/session's.jsonl"),
+            "",
         );
         assert!(command.contains("/bin/sh -c"));
         assert!(!command.contains('\n'));

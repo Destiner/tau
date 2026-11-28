@@ -4,6 +4,33 @@
     class="session-header"
   >
     <div class="session-heading">
+      <UiTooltip
+        v-if="projectTrustShield"
+        text="Untrusted Project"
+        side="bottom"
+      >
+        <UiIconButton
+          class="project-trust-shield"
+          size="sm"
+          variant="fill"
+          label="Untrusted Project"
+          @click="openProjectTrust"
+        >
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 20 20"
+            fill="none"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path
+              d="M10 2.5 16.5 5v4.4c0 3.6-2.6 6.2-6.5 8.1-3.9-1.9-6.5-4.5-6.5-8.1V5L10 2.5Z"
+            />
+            <path d="M10 6.5v3.7m0 2.6h.01" />
+          </svg>
+        </UiIconButton>
+      </UiTooltip>
       <UiInput
         v-if="renamingSession"
         ref="sessionTitleInput"
@@ -102,14 +129,16 @@ const props = withDefaults(
   defineProps<{
     /** Keeps an in-progress rename open while the palette takes focus. */
     paletteOpen?: boolean;
+    projectTrustShield?: boolean;
   }>(),
-  { paletteOpen: false },
+  { paletteOpen: false, projectTrustShield: false },
 );
 
 const emit = defineEmits<{
   'composer-focus': [];
   'palette-toggle': [];
   'new-session': [];
+  'project-trust': [trigger: HTMLButtonElement];
 }>();
 
 const {
@@ -136,6 +165,11 @@ watch(
 watch(canRenameSession, (renamable) => {
   if (!renamable) cancelSessionRename();
 });
+
+function openProjectTrust(event: MouseEvent): void {
+  if (event.currentTarget instanceof HTMLButtonElement)
+    emit('project-trust', event.currentTarget);
+}
 
 function handleNewSession(): void {
   emit('new-session');
@@ -224,12 +258,27 @@ defineExpose({
 }
 
 .session-heading {
+  display: flex;
   flex: 1;
+  align-items: center;
+  gap: 3px;
   min-width: 0;
   margin-left: -5px;
 }
 
+.project-trust-shield[data-size='sm'] {
+  width: 22px;
+  height: 22px;
+}
+
+.project-trust-shield svg {
+  width: 15px;
+  height: 15px;
+  stroke: light-dark(#8a5000, #ffbc55);
+}
+
 .session-heading h1 {
+  min-width: 0;
   max-width: 60ch;
   margin: 0;
   overflow: hidden;

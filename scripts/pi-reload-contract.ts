@@ -1,13 +1,27 @@
 #!/usr/bin/env bun
 
 import assert from 'node:assert/strict';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import {
+  execFile,
+  spawn,
+  type ChildProcessWithoutNullStreams,
+} from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 const STARTUP_TIMEOUT_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -16,6 +30,9 @@ const CLEANUP_TIMEOUT_MS = 1_000;
 const MAX_STDOUT_RECORD_CHARS = 1_000_000;
 const MAX_VERSION_CHARS = 128;
 const HELPER = 'tau-internal-reload-v1';
+const TRUST_STATUS = 'tau-internal-project-trust-v1';
+const TRUST_STARTUP_FRAME = '__TAU_PI_TRUST__';
+const TRUST_SKILL = 'tau-trust-contract-skill';
 type JsonRecord = Record<string, unknown>;
 
 class ContractError extends Error {}
@@ -54,6 +71,9 @@ class PiRpcProcess {
     signal: NodeJS.Signals | null;
   }>;
   readonly notifications: unknown[] = [];
+  readonly trustReports: JsonRecord[] = [];
+  startupTrustIdentity?: JsonRecord;
+  private readonly trustNonce: string | undefined;
   private stdoutBuffer = '';
   private fatalError: Error | undefined;
   private exited = false;
@@ -64,7 +84,9 @@ class PiRpcProcess {
     args: string[],
     cwd: string,
     env: NodeJS.ProcessEnv,
+    trustNonce?: string,
   ) {
+    this.trustNonce = trustNonce;
     this.child = spawn(command, args, {
       cwd,
       env,
@@ -223,6 +245,25 @@ class PiRpcProcess {
   }
 
   private consumeStdoutLine(line: string): void {
+    if (this.trustNonce && line.startsWith(TRUST_STARTUP_FRAME)) {
+      let frame: JsonRecord | undefined;
+      try {
+        frame = asRecord(JSON.parse(line.slice(TRUST_STARTUP_FRAME.length)));
+      } catch {
+        // Do not include startup identity data in diagnostics.
+      }
+      const identity = asRecord(frame?.identity);
+      if (frame?.nonce !== this.trustNonce || !identity) {
+        this.fail(
+          new ContractError(
+            'Pi did not provide verified trust startup evidence.',
+          ),
+        );
+      } else {
+        this.startupTrustIdentity ??= identity;
+      }
+      return;
+    }
     let value: unknown;
     try {
       value = JSON.parse(line);
@@ -246,6 +287,22 @@ class PiRpcProcess {
         record.method === 'notify'
       ) {
         this.notifications.push(record.message);
+        return;
+      }
+      if (
+        record.type === 'extension_ui_request' &&
+        record.method === 'setStatus' &&
+        record.statusKey === TRUST_STATUS
+      ) {
+        try {
+          const report =
+            typeof record.statusText === 'string' &&
+            asRecord(JSON.parse(record.statusText) as unknown);
+          if (!report) throw new Error();
+          this.trustReports.push(report);
+        } catch {
+          this.fail(new ContractError('Pi emitted a malformed trust report.'));
+        }
         return;
       }
       this.fail(
@@ -524,7 +581,25 @@ async function verifyResources(
   );
 }
 
-async function main(): Promise<void> {
+function piCommand(): string {
+  const selected = process.env.TAU_PI_PATH?.trim() || 'pi';
+  return selected.includes('/') || selected.includes('\\')
+    ? resolve(selected)
+    : selected;
+}
+
+async function copyHelper(root: string): Promise<string> {
+  const source = new URL(
+    '../src-tauri/pi-extensions/tau-reload.ts',
+    import.meta.url,
+  );
+  // Copy only bundled source into the isolated root; no repository discovery/imports.
+  const destination = join(root, 'tau-reload.ts');
+  await writeFile(destination, await readFile(source));
+  return destination;
+}
+
+async function reloadContract(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), 'tau-pi-reload-contract-'));
   let rpc: PiRpcProcess | undefined;
   try {
@@ -533,11 +608,7 @@ async function main(): Promise<void> {
     await mkdir(config);
     await mkdir(sessions);
     const env = isolatedEnvironment(root);
-    const selected = process.env.TAU_PI_PATH?.trim() || 'pi';
-    const command =
-      selected.includes('/') || selected.includes('\\')
-        ? resolve(selected)
-        : selected;
+    const command = piCommand();
     const version = await readPiVersion(command, root, env);
     console.log(`Testing reload contract with pi ${version}.`);
     await fixtures(root, 1);
@@ -572,12 +643,7 @@ async function main(): Promise<void> {
         .map((entry) => JSON.stringify(entry))
         .join('\n') + '\n',
     );
-    const helper = fileURLToPath(
-      new URL('../src-tauri/pi-extensions/tau-reload.ts', import.meta.url),
-    );
-    // Copy only bundled source into the isolated root; no repository discovery/imports.
-    const isolatedHelper = join(root, 'tau-reload.ts');
-    await writeFile(isolatedHelper, await readFile(helper));
+    const isolatedHelper = await copyHelper(root);
     rpc = new PiRpcProcess(
       command,
       [
@@ -652,11 +718,272 @@ async function main(): Promise<void> {
   }
 }
 
+async function resolvePi(cwd: string, env: NodeJS.ProcessEnv): Promise<string> {
+  const command = piCommand();
+  const candidates =
+    command === resolve(command)
+      ? [command]
+      : (env.PATH ?? '')
+          .split(delimiter)
+          .map((entry) => resolve(cwd, entry, command));
+  for (const candidate of candidates) {
+    // Keep the launcher path, as native code does; the helper identifies its SDK.
+    if (
+      await access(candidate, constants.X_OK).then(
+        () => true,
+        () => false,
+      )
+    ) {
+      return candidate;
+    }
+  }
+  throw new ContractError(
+    'Unable to resolve Pi. Install pi on PATH or set TAU_PI_PATH.',
+  );
+}
+
+async function trustDecision(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  pi: string,
+  project: string,
+  startup: JsonRecord,
+  previous?: JsonRecord,
+): Promise<{ saved: boolean; exact: boolean; identity: JsonRecord }> {
+  const helper = fileURLToPath(
+    new URL('../src-tauri/pi-extensions/project-trust.mjs', import.meta.url),
+  );
+  const operation = previous ? 'grant' : 'inspect';
+  let result: JsonRecord | undefined;
+  try {
+    const { stdout } = await promisify(execFile)(
+      'node',
+      [
+        helper,
+        pi,
+        JSON.stringify({
+          operation,
+          projectFolder: project,
+          runtimeCwd: project,
+          startup,
+          previous,
+        }),
+      ],
+      {
+        cwd: root,
+        env,
+        timeout: REQUEST_TIMEOUT_MS,
+        killSignal: 'SIGKILL',
+        maxBuffer: 64 * 1024,
+      },
+    );
+    result = asRecord(JSON.parse(stdout) as unknown);
+  } catch {
+    throw new ContractError(`Native trust helper failed during ${operation}.`);
+  }
+  const identity = asRecord(result?.identity);
+  if (
+    !identity ||
+    result?.folder !== project ||
+    typeof result.saved !== 'boolean' ||
+    typeof result.exact !== 'boolean'
+  ) {
+    const kind = result?.kind;
+    const reason =
+      kind === 'unsupported' ||
+      kind === 'unavailable' ||
+      kind === 'mismatch' ||
+      kind === 'unconfirmed'
+        ? kind
+        : 'invalid response';
+    throw new ContractError(`Native trust helper ${operation}: ${reason}.`);
+  }
+  assert.equal(
+    identity.agentDir,
+    env.PI_CODING_AGENT_DIR,
+    'Trust must use the disposable agent directory.',
+  );
+  return { saved: result.saved, exact: result.exact, identity };
+}
+
+async function verifyTrust(
+  rpc: PiRpcProcess,
+  project: string,
+  trusted: boolean,
+  firstReport: number,
+  phase: string,
+): Promise<string> {
+  const state = data(await rpc.request('get_state'));
+  const catalogue = await commands(rpc);
+  assert.ok(
+    typeof state.sessionId === 'string' && state.sessionId.length > 0,
+    `${phase}: missing RPC session identity.`,
+  );
+  const reports = rpc.trustReports.slice(firstReport);
+  assert.ok(
+    reports.length > 0,
+    `${phase}: missing private project trust report.`,
+  );
+  for (const report of reports) {
+    assert.deepEqual(
+      report,
+      {
+        version: 1,
+        trusted,
+        cwd: project,
+        sessionId: state.sessionId,
+        sessionFile: state.sessionFile ?? null,
+      },
+      `${phase}: incorrect effective trust or runtime identity.`,
+    );
+  }
+  const skills = catalogue.filter(
+    (entry) => entry.name === `skill:${TRUST_SKILL}`,
+  );
+  assert.equal(
+    skills.length,
+    trusted ? 1 : 0,
+    `${phase}: unexpected project skill visibility.`,
+  );
+  if (trusted) assert.equal(skills[0]?.source, 'skill');
+  assert.equal(
+    rpc.notifications.length,
+    0,
+    `${phase}: unexpected extension notifications.`,
+  );
+  return state.sessionId;
+}
+
+async function trustContract(): Promise<void> {
+  const temp = await mkdtemp(join(tmpdir(), 'tau-pi-trust-contract-'));
+  let rpc: PiRpcProcess | undefined;
+  try {
+    const root = await realpath(temp);
+    const env = isolatedEnvironment(root);
+    const config = join(root, 'config');
+    const sessions = join(root, 'sessions');
+    const project = join(root, 'project');
+    // The helper runs outside the project; use the same Node lookup for both processes.
+    if (env.PATH !== undefined) {
+      env.PATH = env.PATH.split(delimiter)
+        .map((entry) => resolve(project, entry))
+        .join(delimiter);
+    }
+    const skill = join(project, '.pi', 'skills', TRUST_SKILL);
+    await mkdir(config);
+    await mkdir(sessions);
+    await mkdir(skill, { recursive: true });
+    await writeFile(
+      join(config, 'settings.json'),
+      JSON.stringify({ defaultProjectTrust: 'never' }),
+    );
+    await writeFile(
+      join(skill, 'SKILL.md'),
+      `---\nname: ${TRUST_SKILL}\ndescription: Inert project trust fixture\n---\nThis skill is never invoked.\n`,
+    );
+    const helper = await copyHelper(root);
+    const pi = await resolvePi(project, env);
+    const version = await readPiVersion(pi, project, env);
+    console.log(`Testing project trust contract with pi ${version}.`);
+
+    // Do not force a trust override or explicitly load the skill: Pi must discover it.
+    const open = (): PiRpcProcess => {
+      const nonce = randomUUID();
+      return new PiRpcProcess(
+        pi,
+        [
+          '--mode',
+          'rpc',
+          '--offline',
+          '--no-tools',
+          '--no-mcp',
+          '--no-extensions',
+          '--no-prompt-templates',
+          '--no-context-files',
+          '--no-themes',
+          '--session-dir',
+          sessions,
+          '--extension',
+          helper,
+        ],
+        project,
+        { ...env, TAU_PROJECT_TRUST_NONCE: nonce, TAU_PROJECT_TRUST_CLI: pi },
+        nonce,
+      );
+    };
+
+    rpc = open();
+    const liveId = await verifyTrust(rpc, project, false, 0, 'Initial process');
+    const startup = rpc.startupTrustIdentity;
+    assert.ok(
+      startup,
+      'The runtime must attest the target before trust can be saved.',
+    );
+    const initial = await trustDecision(root, env, pi, project, startup);
+    assert.equal(
+      initial.saved,
+      false,
+      'Disposable project must start with no saved grant.',
+    );
+    const grant = await trustDecision(
+      root,
+      env,
+      pi,
+      project,
+      startup,
+      initial.identity,
+    );
+    assert.ok(
+      grant.saved && grant.exact,
+      'Grant must read back for the exact folder.',
+    );
+    const saved = await trustDecision(root, env, pi, project, startup);
+    assert.equal(
+      saved.saved && saved.exact,
+      true,
+      'Independent inspection must see the exact saved grant.',
+    );
+    assert.deepEqual(
+      saved.identity,
+      initial.identity,
+      'Readback must identify the same folder, agent directory and installation.',
+    );
+    assert.equal(
+      await verifyTrust(rpc, project, false, 0, 'After grant'),
+      liveId,
+    );
+    const beforeReload = rpc.trustReports.length;
+    await invoke(rpc, HELPER);
+    assert.equal(
+      await verifyTrust(rpc, project, false, beforeReload, 'After reload'),
+      liveId,
+    );
+    await rpc.close();
+
+    rpc = open();
+    assert.notEqual(
+      await verifyTrust(rpc, project, true, 0, 'Fresh process'),
+      liveId,
+    );
+    await rpc.close();
+    console.log(
+      `Pi trust contract passed with pi ${version}: grant saved and read back; running Pi stayed untrusted through reload; fresh Pi trusted the project and listed its skill.`,
+    );
+  } finally {
+    try {
+      await rpc?.cleanup();
+    } finally {
+      await rm(temp, { recursive: true, force: true });
+    }
+  }
+}
+
+const trust = process.argv[2] === '--trust';
 try {
-  await main();
+  await (trust ? trustContract() : reloadContract());
 } catch (error) {
   console.error(
-    `Pi reload contract failed: ${error instanceof Error ? error.message : 'unknown incompatibility'}`,
+    `Pi ${trust ? 'trust' : 'reload'} contract failed: ${error instanceof Error ? error.message : 'unknown incompatibility'}`,
   );
   process.exitCode = 1;
 }

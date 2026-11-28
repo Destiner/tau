@@ -2,6 +2,11 @@ import { invoke } from '@tauri-apps/api/core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { PiBridgeEvent } from '../../lib/pi/bridge';
+import {
+  effectiveProjectTrust,
+  markProjectTrustGranted,
+  projectTrustStatusKey,
+} from '../../lib/pi/runtime/project-trust';
 import { nextRequestId, state } from '../state';
 import type {
   ProjectSummary,
@@ -100,6 +105,86 @@ beforeEach(() => {
 });
 
 describe('session drafts and selection', () => {
+  it('discovers commands in a fresh process after a grant without changing live siblings', async () => {
+    const { tau, project, firstController, secondController } =
+      await setupExtensionControllers('/tmp/trust-catalogue-test');
+    const oldCommands = [{ name: 'existing', source: 'extension' as const }];
+    secondController.currentModelId = 'alpha';
+    secondController.models = [
+      { provider: 'provider', id: 'alpha', name: 'Alpha', reasoning: true },
+    ];
+    secondController.efforts = ['off'];
+    secondController.commands = oldCommands;
+    secondController.commandsLoaded = true;
+    secondController.draft = 'draft to keep';
+    firstController.draft = 'background draft';
+    emitRpc(secondController, {
+      type: 'extension_ui_request',
+      id: 'trust-status',
+      method: 'setStatus',
+      statusKey: projectTrustStatusKey,
+      statusText: JSON.stringify({
+        version: 1,
+        cwd: project.workingDirectory,
+        trusted: false,
+        sessionId: secondController.sessionId,
+        sessionFile: secondController.sessionPath,
+      }),
+    });
+    emitRpc(secondController, {
+      type: 'response',
+      id: secondController.bootstrapStateRequestId,
+      command: 'get_state',
+      success: true,
+      data: {
+        sessionId: secondController.sessionId,
+        sessionFile: secondController.sessionPath,
+        model: { provider: 'provider', id: 'alpha', name: 'Alpha' },
+      },
+    });
+    expect(effectiveProjectTrust(secondController)?.trusted).toBe(false);
+
+    const inherited = await tau.newSession(project);
+    expect(inherited?.generation).toBe(0);
+    expect(inherited?.commands).toEqual(oldCommands);
+    const commandsAndDraft = {
+      commands: oldCommands,
+      draft: 'draft to keep',
+      generation: secondController.generation,
+    };
+    vi.mocked(invoke).mockClear();
+    markProjectTrustGranted(project.path);
+    expect(vi.mocked(invoke)).not.toHaveBeenCalled();
+    expect(secondController).toMatchObject(commandsAndDraft);
+    expect(firstController).toMatchObject({
+      draft: 'background draft',
+      streaming: true,
+    });
+    expect(effectiveProjectTrust(secondController)?.trusted).toBe(false);
+
+    const fresh = await tau.newSession(project);
+    if (!fresh) throw new Error('Expected a fresh controller');
+    expect(fresh.generation).toBeGreaterThan(0);
+    expect(fresh.commandsLoaded).toBe(false);
+    expect(sentRequests(fresh, 'get_commands')).toHaveLength(1);
+    expect(sentRequests(fresh, 'prompt')).toHaveLength(0);
+    expect(secondController).toMatchObject(commandsAndDraft);
+    emitRpc(fresh, {
+      type: 'response',
+      id: sentRequests(fresh, 'get_commands')[0]?.id,
+      command: 'get_commands',
+      success: true,
+      data: { commands: [{ name: 'skill:fresh', source: 'skill' }] },
+    });
+    await vi.waitFor(() => expect(fresh.commandsLoaded).toBe(true));
+    fresh.models = [...secondController.models];
+    fresh.efforts = [...secondController.efforts];
+    fresh.draft = 'keep this live source';
+    const next = await tau.newSession(project);
+    expect(next?.generation).toBe(0);
+    expect(next?.commands).toEqual([{ name: 'skill:fresh', source: 'skill' }]);
+  });
+
   it('opens a usable new session when the first local project is imported', async () => {
     const project: ProjectSummary = {
       path: '/tmp/tau-first-project',
@@ -3112,7 +3197,9 @@ function sentRequests(
     .filter((request) => request.type === type);
 }
 
-async function setupExtensionControllers(): Promise<{
+async function setupExtensionControllers(
+  projectPath = '/tmp/extension-ui-test',
+): Promise<{
   tau: Tau;
   project: ProjectSummary;
   firstSession: SessionSummary;
@@ -3123,9 +3210,9 @@ async function setupExtensionControllers(): Promise<{
   const firstSession = savedSession('first');
   const secondSession = savedSession('second');
   const project: ProjectSummary = {
-    path: '/tmp/extension-ui-test',
+    path: projectPath,
     name: 'extension-ui-test',
-    workingDirectory: '/tmp/extension-ui-test',
+    workingDirectory: projectPath,
     collapsed: false,
     selected: true,
     sessions: [firstSession, secondSession],
